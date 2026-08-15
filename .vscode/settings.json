@@ -1,0 +1,9 @@
+{
+  "swift.path": "/usr/bin/swift",
+  "swift.backgroundCompilation": true,
+  "files.exclude": {
+    "**/.build": true,
+    "**/build": true
+  }
+}
+

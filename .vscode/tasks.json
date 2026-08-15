@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "MenuTools: Doctor",
+      "type": "shell",
+      "command": "make doctor",
+      "problemMatcher": []
+    },
+    {
+      "label": "MenuTools: Build Debug",
+      "type": "shell",
+      "command": "make build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$swiftc"
+    },
+    {
+      "label": "MenuTools: Build and Run",
+      "type": "shell",
+      "command": "make run",
+      "problemMatcher": "$swiftc"
+    }
+  ]
+}
+
