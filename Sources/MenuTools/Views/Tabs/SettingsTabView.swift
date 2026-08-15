@@ -20,9 +20,9 @@ struct SettingsTabView: View {
     }
 
     private var permissionsCard: some View {
-        MacToolsCard(padding: 11) {
-            VStack(alignment: .leading, spacing: 10) {
-                SettingsSectionHeader(title: "PERMISSIONS", icon: "hand.raised.fill", color: .orange)
+        MacToolsCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 8) {
+                SettingsSectionHeader(title: "PERMISSIONS", icon: "hand.raised", color: .orange)
 
                 PermissionRow(
                     title: "Accessibility",
@@ -55,27 +55,27 @@ struct SettingsTabView: View {
                     appState.iMessage.requestPermissions()
                 }
 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Button("Request required access") {
                         appState.iMessage.requestPermissions()
                     }
                     .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .controlSize(.mini)
 
                     Button("Refresh") {
                         appState.iMessage.refreshPermissions()
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(.mini)
                 }
             }
         }
     }
 
     private var iMessageDiagnosticsCard: some View {
-        MacToolsCard(padding: 11) {
-            VStack(alignment: .leading, spacing: 9) {
-                SettingsSectionHeader(title: "MESSAGES SHORTCUTS", icon: "message.fill", color: .blue)
+        MacToolsCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 7) {
+                SettingsSectionHeader(title: "MESSAGES SHORTCUTS", icon: "message", color: .blue)
 
                 DiagnosticRow(
                     label: "Listener", value: appState.iMessage.isEventTapActive ? "Running" : "Stopped",
@@ -93,7 +93,7 @@ struct SettingsTabView: View {
 
                 if let errorMessage = appState.iMessage.errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: 9.5, weight: .medium))
+                        .font(.system(size: 9, weight: .regular))
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -103,12 +103,12 @@ struct SettingsTabView: View {
                     Button("Test next") { appState.iMessage.testNextInMessages() }
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.mini)
 
                 Text(
                     "The test activates Messages, then sends the same shortcuts as the original Keyboard Maestro macro."
                 )
-                .font(.system(size: 9))
+                .font(.system(size: 8.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -116,8 +116,8 @@ struct SettingsTabView: View {
     }
 
     private var requirementsCard: some View {
-        MacToolsCard(padding: 11) {
-            VStack(alignment: .leading, spacing: 9) {
+        MacToolsCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 7) {
                 SettingsSectionHeader(title: "REQUIREMENTS", icon: "checklist", color: .green)
 
                 RequirementRow(
@@ -135,7 +135,7 @@ struct SettingsTabView: View {
                 Text(
                     "Finder, Trash and DNS actions may ask for Automation or administrator approval when you run them."
                 )
-                .font(.system(size: 9))
+                .font(.system(size: 8.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -143,11 +143,11 @@ struct SettingsTabView: View {
     }
 
     private var generalCard: some View {
-        MacToolsCard(padding: 11) {
-            VStack(alignment: .leading, spacing: 10) {
-                SettingsSectionHeader(title: "GENERAL", icon: "gearshape.fill", color: .secondary)
+        MacToolsCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 8) {
+                SettingsSectionHeader(title: "GENERAL", icon: "gearshape", color: .secondary)
 
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     SettingsLabel(title: "Launch at Login", detail: "Start MenuTools after sign-in")
                     Spacer(minLength: 8)
                     Toggle(
@@ -159,12 +159,12 @@ struct SettingsTabView: View {
                     )
                     .labelsHidden()
                     .toggleStyle(.switch)
-                    .controlSize(.small)
+                    .controlSize(.mini)
                 }
 
                 Divider().opacity(0.35)
 
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     SettingsLabel(title: "Menu bar text", detail: "Optional live status beside the icon")
                     Spacer(minLength: 8)
                     Picker(
@@ -179,15 +179,16 @@ struct SettingsTabView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 150)
+                    .controlSize(.small)
+                    .frame(width: 140)
                 }
             }
         }
     }
 
     private var shortcutsCard: some View {
-        MacToolsCard(padding: 11) {
-            VStack(alignment: .leading, spacing: 8) {
+        MacToolsCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 6) {
                 SettingsSectionHeader(title: "SHORTCUTS", icon: "keyboard", color: .purple)
                 ShortcutRow(shortcut: "⌥⌘V", description: "Open Clipboard HUD")
                 ShortcutRow(shortcut: "↑ / ↓", description: "Previous / next Messages chat")
@@ -198,19 +199,19 @@ struct SettingsTabView: View {
     }
 
     private var appInfoCard: some View {
-        MacToolsCard(padding: 11) {
-            HStack(spacing: 10) {
+        MacToolsCard(padding: 9) {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("MenuTools 1.0")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10.5, weight: .semibold))
                     Text("Native Swift · local data · menu bar only")
-                        .font(.system(size: 9))
+                        .font(.system(size: 8.5))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(.mini)
                     .tint(.red)
             }
         }
@@ -233,7 +234,7 @@ private struct SettingsSectionHeader: View {
 
     var body: some View {
         Label(title, systemImage: icon)
-            .font(.system(size: 9, weight: .bold))
+            .font(.system(size: 8, weight: .semibold))
             .foregroundStyle(color)
     }
 }
@@ -245,9 +246,9 @@ private struct SettingsLabel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.system(size: 10.5, weight: .semibold))
+                .font(.system(size: 10, weight: .medium))
             Text(detail)
-                .font(.system(size: 9))
+                .font(.system(size: 8.5))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
@@ -262,16 +263,16 @@ private struct PermissionRow: View {
     let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Image(systemName: isGranted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                 .foregroundStyle(isGranted ? .green : .orange)
-                .font(.system(size: 14))
-                .frame(width: 18)
+                .font(.system(size: 12))
+                .frame(width: 16)
             SettingsLabel(title: title, detail: detail)
             Spacer(minLength: 6)
             if isGranted {
                 Text("Granted")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(.green)
             } else {
                 Button(actionTitle, action: action)
@@ -288,16 +289,16 @@ private struct DiagnosticRow: View {
     let isHealthy: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             Circle()
                 .fill(isHealthy ? Color.green : Color.orange)
                 .frame(width: 6, height: 6)
             Text(label)
-                .font(.system(size: 9.5))
+                .font(.system(size: 9))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             Text(value)
-                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
@@ -319,10 +320,10 @@ private struct RequirementRow: View {
             .foregroundStyle(isAvailable ? .green : (isOptional ? .secondary : .red))
             .frame(width: 16)
             Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .frame(width: 72, alignment: .leading)
+                .font(.system(size: 9.5, weight: .medium))
+                .frame(width: 68, alignment: .leading)
             Text(detail)
-                .font(.system(size: 9))
+                .font(.system(size: 8.5))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -338,14 +339,14 @@ private struct ShortcutRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(description)
-                .font(.system(size: 9.5))
+                .font(.system(size: 9))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             Text(shortcut)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
                 .lineLimit(1)
                 .padding(.horizontal, 7)
-                .frame(minHeight: 22)
+                .frame(minHeight: 20)
                 .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
         }
     }

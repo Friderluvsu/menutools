@@ -49,17 +49,18 @@ struct PopoverContentView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "wrench.and.screwdriver.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 26, height: 26)
-                .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 7))
+        HStack(spacing: 8) {
+            Image(systemName: "wrench.and.screwdriver")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(showSettings ? "Settings" : "MenuTools")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 12, weight: .semibold))
                 Text(headerSubtitle)
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 9, weight: .regular))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -82,15 +83,15 @@ struct PopoverContentView: View {
                 }
             } label: {
                 Image(systemName: showSettings ? "xmark" : "gearshape")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 28, height: 28)
-                    .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                    .font(.system(size: 11, weight: .regular))
+                    .frame(width: 24, height: 24)
+                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
             }
             .buttonStyle(.plain)
             .help(showSettings ? "Back to tools" : "Settings")
         }
         .padding(.horizontal, MacToolsTheme.outerPadding)
-        .frame(height: 48)
+        .frame(height: 42)
     }
 
     private var headerSubtitle: String {
@@ -112,16 +113,16 @@ struct PopoverContentView: View {
     }
 
     private var metricsCard: some View {
-        MacToolsCard(padding: 10) {
-            VStack(spacing: 8) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+        MacToolsCard(padding: 8) {
+            VStack(spacing: 6) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 4), spacing: 5) {
                     MetricTile(title: "CPU", value: "\(Int(appState.systemMonitor.cpuUsage))%")
                     MetricTile(title: "RAM", value: String(format: "%.1fG", appState.systemMonitor.memoryUsedGB))
                     MetricTile(title: "DOWN", value: formatSpeed(appState.systemMonitor.downloadSpeedKBps))
                     MetricTile(title: "UP", value: formatSpeed(appState.systemMonitor.uploadSpeedKBps))
                 }
 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     IPButton(label: "LAN", value: appState.systemMonitor.localIP) {
                         copy(appState.systemMonitor.localIP, notice: "LAN address copied")
                     }
@@ -138,7 +139,7 @@ struct PopoverContentView: View {
             ToolToggleCard(
                 title: "Anti-Sleep",
                 status: appState.antiSleep.isActive ? appState.antiSleep.statusText : "Off",
-                icon: "cup.and.saucer.fill",
+                icon: "cup.and.saucer",
                 color: .orange,
                 isActive: appState.antiSleep.isActive,
                 action: appState.antiSleep.toggle
@@ -147,7 +148,7 @@ struct PopoverContentView: View {
                 title: "VanyaVPN",
                 status: appState.network.isVPNTransitioning
                     ? "Updating…" : (appState.network.isVPNConnected ? "Connected" : "Off"),
-                icon: "shield.fill",
+                icon: "shield",
                 color: .green,
                 isActive: appState.network.isVPNConnected,
                 isWorking: appState.network.isVPNTransitioning,
@@ -157,7 +158,7 @@ struct PopoverContentView: View {
                 title: "SpoofDPI",
                 status: appState.network.isSpoofTransitioning
                     ? "Updating…" : (appState.network.isSpoofDPIRunning ? "Running" : "Off"),
-                icon: "bolt.fill",
+                icon: "bolt.horizontal",
                 color: .cyan,
                 isActive: appState.network.isSpoofDPIRunning,
                 isWorking: appState.network.isSpoofTransitioning,
@@ -166,7 +167,7 @@ struct PopoverContentView: View {
             ToolToggleCard(
                 title: "Messages Nav",
                 status: iMessageStatus,
-                icon: "message.fill",
+                icon: "message",
                 color: .blue,
                 isActive: appState.iMessage.isEnabled && appState.iMessage.isEventTapActive,
                 action: { appState.iMessage.isEnabled.toggle() }
@@ -182,11 +183,11 @@ struct PopoverContentView: View {
     }
 
     private var converterCard: some View {
-        MacToolsCard(padding: 10) {
-            VStack(alignment: .leading, spacing: 10) {
+        MacToolsCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Label("Media Converter", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.primary)
 
                     Spacer()
@@ -201,7 +202,7 @@ struct PopoverContentView: View {
                             Button("Clear queue", role: .destructive) { appState.converter.clearAll() }
                         } label: {
                             Image(systemName: "ellipsis.circle")
-                                .font(.system(size: 13))
+                                .font(.system(size: 12))
                         }
                         .menuStyle(.borderlessButton)
                         .fixedSize()
@@ -221,14 +222,16 @@ struct PopoverContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .controlSize(.small)
 
                 HStack(spacing: 8) {
                     Text("Format")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 9, weight: .regular))
                         .foregroundStyle(.secondary)
-                        .frame(width: 42, alignment: .leading)
+                        .frame(width: 38, alignment: .leading)
                     currentPresetPicker
                         .frame(maxWidth: .infinity)
+                        .controlSize(.small)
                 }
 
                 dropZone
@@ -248,26 +251,26 @@ struct PopoverContentView: View {
 
     private var dropZone: some View {
         Button(action: selectFiles) {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: "square.and.arrow.down")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.pink)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Drop files here or choose files")
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .medium))
                         .lineLimit(1)
                     Text("Video, audio, GIF and images")
-                        .font(.system(size: 9))
+                        .font(.system(size: 8.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 8.5, weight: .regular))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 46)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 40)
             .background(isDropTargeted ? Color.pink.opacity(0.12) : Color.white.opacity(0.035))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
@@ -282,23 +285,23 @@ struct PopoverContentView: View {
     }
 
     private var clipboardCard: some View {
-        MacToolsCard(padding: 10) {
-            VStack(alignment: .leading, spacing: 7) {
+        MacToolsCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Label("Clipboard", systemImage: "doc.on.clipboard.fill")
-                        .font(.system(size: 12, weight: .bold))
+                    Label("Clipboard", systemImage: "doc.on.clipboard")
+                        .font(.system(size: 11, weight: .semibold))
                     Spacer()
                     Button("Open HUD  ⌥⌘V") { ClipboardHUDWindowController.shared.show() }
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 9, weight: .regular))
                         .buttonStyle(.borderless)
                 }
 
                 let recentClips = Array(appState.clipboard.items.prefix(2))
                 if recentClips.isEmpty {
                     Text("Copied text will appear here")
-                        .font(.system(size: 10))
+                        .font(.system(size: 9.5))
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                        .frame(maxWidth: .infinity, minHeight: 25, alignment: .leading)
                 } else {
                     ForEach(Array(recentClips.enumerated()), id: \.element.id) { index, item in
                         Button {
@@ -307,17 +310,17 @@ struct PopoverContentView: View {
                         } label: {
                             HStack(spacing: 7) {
                                 Text("\(index + 1)")
-                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                                     .foregroundStyle(.secondary)
                                     .frame(width: 14)
                                 Text(item.snippet)
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 9.5))
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                 Spacer(minLength: 0)
                             }
-                            .padding(.horizontal, 8)
-                            .frame(maxWidth: .infinity, minHeight: 28)
+                            .padding(.horizontal, 7)
+                            .frame(maxWidth: .infinity, minHeight: 25)
                             .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
                         }
                         .buttonStyle(.plain)
@@ -328,17 +331,17 @@ struct PopoverContentView: View {
     }
 
     private var antiSleepPresets: some View {
-        MacToolsCard(padding: 10) {
-            VStack(alignment: .leading, spacing: 8) {
+        MacToolsCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("ANTI-SLEEP TIMER")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.secondary)
 
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 6), spacing: 5) {
                     ForEach(AntiSleepManager.durations, id: \.seconds) { duration in
                         Button(duration.label) { appState.antiSleep.selectDuration(duration.seconds) }
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .frame(maxWidth: .infinity, minHeight: 26)
+                            .font(.system(size: 9, weight: .medium))
+                            .frame(maxWidth: .infinity, minHeight: 24)
                             .background(
                                 appState.antiSleep.isActive && appState.antiSleep.selectedDuration == duration.seconds
                                     ? Color.orange.opacity(0.20)
@@ -354,10 +357,10 @@ struct PopoverContentView: View {
 
     private var systemActions: some View {
         LazyVGrid(columns: twoColumns, spacing: MacToolsTheme.sectionSpacing) {
-            SystemActionButton(title: "Eject disks", icon: "eject.fill", color: .red) {
+            SystemActionButton(title: "Eject disks", icon: "eject", color: .red) {
                 appState.systemUtils.ejectAllDisks()
             }
-            SystemActionButton(title: "Empty Trash", icon: "trash.fill", color: .orange) {
+            SystemActionButton(title: "Empty Trash", icon: "trash", color: .orange) {
                 appState.systemUtils.emptyTrash()
             }
             SystemActionButton(title: "Reset Google Drive", icon: "arrow.triangle.2.circlepath", color: .purple) {
@@ -461,11 +464,11 @@ private struct StatusBadge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
             .foregroundStyle(color)
             .lineLimit(1)
             .padding(.horizontal, 7)
-            .frame(height: 22)
+            .frame(height: 20)
             .background(color.opacity(0.12), in: Capsule())
     }
 }
@@ -477,14 +480,14 @@ private struct MetricTile: View {
     var body: some View {
         VStack(spacing: 2) {
             Text(title)
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: 7.5, weight: .medium))
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
-        .frame(maxWidth: .infinity, minHeight: 38)
+        .frame(maxWidth: .infinity, minHeight: 32)
         .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
     }
 }
@@ -498,10 +501,10 @@ private struct IPButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Text(label)
-                    .font(.system(size: 8.5, weight: .bold))
+                    .font(.system(size: 8, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text(value)
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .font(.system(size: 9, weight: .regular, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
@@ -509,8 +512,8 @@ private struct IPButton: View {
                     .font(.system(size: 8))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: 28)
+            .padding(.horizontal, 7)
+            .frame(maxWidth: .infinity, minHeight: 25)
             .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
@@ -528,20 +531,20 @@ private struct ToolToggleCard: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 9) {
+            HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(isActive ? color : .secondary)
-                    .frame(width: 30, height: 30)
+                    .frame(width: 26, height: 26)
                     .background(
-                        (isActive ? color : Color.secondary).opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                        (isActive ? color : Color.secondary).opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 10, weight: .medium))
                         .lineLimit(1)
                     Text(status)
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: 8.5, weight: .regular))
                         .foregroundStyle(isActive ? color : .secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -552,11 +555,11 @@ private struct ToolToggleCard: View {
                 } else {
                     Circle()
                         .fill(isActive ? color : Color.secondary.opacity(0.35))
-                        .frame(width: 6, height: 6)
+                        .frame(width: 5, height: 5)
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 54)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 46)
             .background(MacToolsTheme.cardBackground, in: RoundedRectangle(cornerRadius: MacToolsTheme.cornerRadius))
             .overlay(RoundedRectangle(cornerRadius: MacToolsTheme.cornerRadius).strokeBorder(MacToolsTheme.borderColor))
         }
@@ -572,18 +575,18 @@ private struct SystemActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .regular))
                     .foregroundStyle(color)
                     .frame(width: 22)
                 Text(title)
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.system(size: 9.5, weight: .regular))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, minHeight: MacToolsTheme.controlHeight)
             .background(MacToolsTheme.cardBackground, in: RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(MacToolsTheme.borderColor))
