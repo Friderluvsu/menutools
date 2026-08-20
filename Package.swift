@@ -7,7 +7,8 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "MenuTools", targets: ["MenuTools"])
+        .executable(name: "MenuTools", targets: ["MenuTools"]),
+        .executable(name: "menutools-smc-helper", targets: ["MenuToolsSMCHelper"])
     ],
     dependencies: [],
     targets: [
@@ -15,6 +16,11 @@ let package = Package(
             name: "MenuTools",
             dependencies: [],
             path: "Sources/MenuTools"
+        ),
+        .executableTarget(
+            name: "MenuToolsSMCHelper",
+            dependencies: [],
+            path: "Sources/MenuToolsSMCHelper"
         )
     ]
 )

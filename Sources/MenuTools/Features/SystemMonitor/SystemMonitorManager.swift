@@ -134,24 +134,13 @@ final class SystemMonitorManager: ObservableObject {
                 upSpeed = (outDelta / 1024.0) / timeDelta
             }
 
-            // Calculate realistic CPU temperature based on load and thermal state
-            let thermalState = ProcessInfo.processInfo.thermalState
-            let baseTemp: Double
-            switch thermalState {
-            case .nominal: baseTemp = 38.0
-            case .fair: baseTemp = 56.0
-            case .serious: baseTemp = 76.0
-            case .critical: baseTemp = 93.0
-            @unknown default: baseTemp = 42.0
-            }
-            let loadOffset = (newCPU / 100.0) * 26.0
-            let targetTemp = baseTemp + loadOffset
+            // Read real hardware CPU temperature from SMC
+            let realTemp = SMCDriver.shared.readCPUTemperature()
 
             await MainActor.run { [weak self] in
                 guard let self = self else { return }
                 self.cpuUsage = newCPU
-                let currentT = self.cpuTemperature
-                self.cpuTemperature = currentT > 0 ? (currentT * 0.65 + targetTemp * 0.35) : targetTemp
+                self.cpuTemperature = realTemp
                 self.memoryUsedGB = newUsedGB
                 self.memoryPercent = newMemPercent
                 self.downloadSpeedKBps = downSpeed

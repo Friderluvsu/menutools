@@ -1,35 +1,46 @@
 import Combine
 import Foundation
 
-enum FanMode: String, CaseIterable, Identifiable {
+public enum FanControlMode: String, CaseIterable, Identifiable, Codable {
     case auto = "Auto"
+    case curve = "Sensor-based"
+    case constant = "Constant RPM"
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .auto: return "Auto (macOS)"
+        case .curve: return "Sensor-based"
+        case .constant: return "Constant RPM"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .auto: return "sparkles"
+        case .curve: return "chart.xyaxis.line"
+        case .constant: return "gauge.with.needle.fill"
+        }
+    }
+}
+
+public enum ConstantPreset: String, CaseIterable, Identifiable {
     case quiet = "Quiet"
     case balanced = "Balanced"
     case boost = "Boost"
     case max = "Max"
-    case custom = "Custom"
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var label: String {
+    public var label: String { rawValue }
+
+    public var caption: String {
         switch self {
-        case .auto: return "Auto"
-        case .quiet: return "Quiet"
-        case .balanced: return "Balanced"
-        case .boost: return "Boost"
-        case .max: return "Max"
-        case .custom: return "Custom"
-        }
-    }
-
-    var caption: String {
-        switch self {
-        case .auto: return "System curve"
-        case .quiet: return "~1800 RPM"
-        case .balanced: return "~3200 RPM"
-        case .boost: return "~4500 RPM"
+        case .quiet: return "Min RPM"
+        case .balanced: return "Moderate"
+        case .boost: return "High airflow"
         case .max: return "Full speed"
-        case .custom: return "Manual RPM"
         }
     }
 }
@@ -37,7 +48,35 @@ enum FanMode: String, CaseIterable, Identifiable {
 @MainActor
 final class FanControlManager: ObservableObject {
     @Published var hasFans: Bool = true
-    @Published var currentMode: FanMode = .auto
+    @Published var controlMode: FanControlMode = .auto {
+        didSet {
+            UserDefaults.standard.set(controlMode.rawValue, forKey: Keys.controlMode)
+            applyModeChange()
+        }
+    }
+
+    @Published var selectedSensor: ThermalSensorGroup = .cpuPerformance {
+        didSet {
+            UserDefaults.standard.set(selectedSensor.rawValue, forKey: Keys.selectedSensor)
+            if controlMode == .curve { updateCurveCalculation(forceApply: true) }
+        }
+    }
+
+    @Published var curveStartTemp: Int = 45 {
+        didSet {
+            UserDefaults.standard.set(curveStartTemp, forKey: Keys.curveStartTemp)
+            if controlMode == .curve { updateCurveCalculation(forceApply: true) }
+        }
+    }
+
+    @Published var curveMaxTemp: Int = 75 {
+        didSet {
+            UserDefaults.standard.set(curveMaxTemp, forKey: Keys.curveMaxTemp)
+            if controlMode == .curve { updateCurveCalculation(forceApply: true) }
+        }
+    }
+
+    @Published var currentSensorTemp: Double = 45.0
     @Published var currentRPM: Int = 0
     @Published var targetRPM: Int = 3000
     @Published var minRPM: Int = 1200
@@ -45,18 +84,53 @@ final class FanControlManager: ObservableObject {
     @Published var fanCount: Int = 0
     @Published var statusText: String = "Auto"
     @Published var modelIdentifier: String = ""
+    @Published var isApplying: Bool = false
+    @Published var selectedPreset: ConstantPreset? = nil
+
+    private enum Keys {
+        static let controlMode = "FanControl.ControlMode"
+        static let selectedSensor = "FanControl.SelectedSensor"
+        static let curveStartTemp = "FanControl.CurveStartTemp"
+        static let curveMaxTemp = "FanControl.CurveMaxTemp"
+        static let targetRPM = "FanControl.TargetRPM"
+    }
 
     private var timerCancellable: AnyCancellable?
+    private var lastAppliedRPM: Int = -1
+    private let smc = SMCDriver.shared
+    private let helper = SMCHelperManager.shared
 
     init() {
+        loadSavedSettings()
         detectHardware()
         if hasFans {
             startMonitoring()
         }
     }
 
+    private func loadSavedSettings() {
+        let defaults = UserDefaults.standard
+        if let rawMode = defaults.string(forKey: Keys.controlMode),
+           let mode = FanControlMode(rawValue: rawMode) {
+            self.controlMode = mode
+        }
+        if let rawSensor = defaults.string(forKey: Keys.selectedSensor),
+           let sensor = ThermalSensorGroup(rawValue: rawSensor) {
+            self.selectedSensor = sensor
+        }
+        if defaults.object(forKey: Keys.curveStartTemp) != nil {
+            self.curveStartTemp = defaults.integer(forKey: Keys.curveStartTemp)
+        }
+        if defaults.object(forKey: Keys.curveMaxTemp) != nil {
+            self.curveMaxTemp = defaults.integer(forKey: Keys.curveMaxTemp)
+        }
+        if defaults.object(forKey: Keys.targetRPM) != nil {
+            let savedRPM = defaults.integer(forKey: Keys.targetRPM)
+            if savedRPM > 0 { self.targetRPM = savedRPM }
+        }
+    }
+
     private func detectHardware() {
-        // Read hardware model identifier via sysctl
         var size: Int = 0
         sysctlbyname("hw.model", nil, &size, nil, 0)
         var model = [CChar](repeating: 0, count: size)
@@ -66,9 +140,23 @@ final class FanControlManager: ObservableObject {
         }
         self.modelIdentifier = modelStr
 
-        // Fanless Macs:
-        // MacBook Air (Intel & Apple Silicon): MacBookAir*, Mac14,2 (M2 Air), Mac14,15 (15" M2 Air), Mac15,12 (M3 Air), Mac15,13 (15" M3 Air), MacBookAir10,1 (M1 Air)
-        // 12-inch Retina MacBook: MacBook8,1, MacBook9,1, MacBook10,1
+        let detectedFans = smc.readFanCount()
+        if detectedFans > 0 {
+            self.hasFans = true
+            self.fanCount = detectedFans
+            let realMin = smc.readFanMinRPM(0)
+            let realMax = smc.readFanMaxRPM(0)
+            if realMin > 0 { self.minRPM = realMin }
+            if realMax > realMin { self.maxRPM = realMax }
+            if targetRPM < minRPM || targetRPM > maxRPM {
+                self.targetRPM = minRPM + Int(Double(maxRPM - minRPM) * 0.25)
+            }
+            self.currentRPM = smc.readFanActualRPM(0)
+            self.currentSensorTemp = smc.readTemperature(for: selectedSensor)
+            updateStatusText()
+            return
+        }
+
         let fanlessModels = [
             "Mac14,2", "Mac14,15", "Mac15,12", "Mac15,13", "MacBookAir10,1",
             "MacBook8,1", "MacBook9,1", "MacBook10,1",
@@ -82,8 +170,8 @@ final class FanControlManager: ObservableObject {
         } else {
             self.hasFans = true
             self.fanCount = modelStr.contains("MacBookPro") ? 2 : 1
-            self.currentRPM = 1800
-            self.statusText = "Auto"
+            self.currentRPM = smc.readFanActualRPM(0)
+            updateStatusText()
         }
     }
 
@@ -91,51 +179,12 @@ final class FanControlManager: ObservableObject {
         timerCancellable?.cancel()
         guard hasFans else { return }
 
-        timerCancellable = Timer.publish(every: 2.0, on: .main, in: .common)
+        updateFanSpeed()
+        timerCancellable = Timer.publish(every: 1.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.updateFanSpeed()
             }
-    }
-
-    func selectMode(_ mode: FanMode) {
-        self.currentMode = mode
-
-        switch mode {
-        case .auto:
-            self.statusText = hasFans ? "Auto" : "No Fans"
-            if hasFans {
-                applySMCFanSpeed(rpm: nil)  // Return to auto
-            }
-        case .quiet:
-            self.targetRPM = 1800
-            self.statusText = hasFans ? "1800 RPM" : "Quiet"
-            if hasFans { applySMCFanSpeed(rpm: 1800) }
-        case .balanced:
-            self.targetRPM = 3200
-            self.statusText = hasFans ? "3200 RPM" : "Balanced"
-            if hasFans { applySMCFanSpeed(rpm: 3200) }
-        case .boost:
-            self.targetRPM = 4500
-            self.statusText = hasFans ? "4500 RPM" : "Boost"
-            if hasFans { applySMCFanSpeed(rpm: 4500) }
-        case .max:
-            self.targetRPM = maxRPM
-            self.statusText = hasFans ? "Max RPM" : "Max"
-            if hasFans { applySMCFanSpeed(rpm: maxRPM) }
-        case .custom:
-            self.statusText = "\(targetRPM) RPM"
-            if hasFans { applySMCFanSpeed(rpm: targetRPM) }
-        }
-    }
-
-    func setCustomRPM(_ rpm: Int) {
-        self.targetRPM = min(max(rpm, minRPM), maxRPM)
-        self.currentMode = .custom
-        self.statusText = "\(targetRPM) RPM"
-        if hasFans {
-            applySMCFanSpeed(rpm: targetRPM)
-        }
     }
 
     private func updateFanSpeed() {
@@ -144,32 +193,132 @@ final class FanControlManager: ObservableObject {
             return
         }
 
-        switch currentMode {
+        let actual = smc.readFanActualRPM(0)
+        if actual > 0 {
+            self.currentRPM = actual
+        }
+
+        self.currentSensorTemp = smc.readTemperature(for: selectedSensor)
+
+        switch controlMode {
         case .auto:
-            currentRPM = max(1200, currentRPM)
             statusText = "Auto"
-        case .quiet:
-            currentRPM = 1800
-            statusText = "1800 RPM"
-        case .balanced:
-            currentRPM = 3200
-            statusText = "3200 RPM"
-        case .boost:
-            currentRPM = 4500
-            statusText = "4500 RPM"
-        case .max:
-            currentRPM = maxRPM
-            statusText = "Max"
-        case .custom:
-            currentRPM = targetRPM
+        case .curve:
+            updateCurveCalculation(forceApply: false)
+        case .constant:
             statusText = "\(targetRPM) RPM"
         }
     }
 
-    private func applySMCFanSpeed(rpm: Int?) {
+    private func updateCurveCalculation(forceApply: Bool) {
+        guard hasFans && controlMode == .curve else { return }
+
+        let tMin = Double(curveStartTemp)
+        let tMax = Double(max(curveMaxTemp, curveStartTemp + 5))
+        let currentT = currentSensorTemp
+
+        let ratio: Double
+        if currentT <= tMin {
+            ratio = 0.0
+        } else if currentT >= tMax {
+            ratio = 1.0
+        } else {
+            ratio = (currentT - tMin) / (tMax - tMin)
+        }
+
+        let span = Double(maxRPM - minRPM)
+        let rawTarget = minRPM + Int(ratio * span)
+        let steppedTarget = (rawTarget / 50) * 50
+        let calculatedRPM = min(max(steppedTarget, minRPM), maxRPM)
+
+        self.targetRPM = calculatedRPM
+        self.statusText = "\(Int(currentSensorTemp))°C → \(calculatedRPM) RPM"
+
+        if forceApply || abs(calculatedRPM - lastAppliedRPM) >= 50 {
+            self.lastAppliedRPM = calculatedRPM
+            sendRPMCommand(rpm: calculatedRPM)
+        }
+    }
+
+    func selectControlMode(_ mode: FanControlMode) {
+        self.controlMode = mode
+    }
+
+    private func applyModeChange() {
         guard hasFans else { return }
-        if let target = rpm {
-            currentRPM = target
+        switch controlMode {
+        case .auto:
+            self.statusText = "Auto"
+            self.lastAppliedRPM = -1
+            sendAutoCommand()
+        case .curve:
+            self.lastAppliedRPM = -1
+            updateCurveCalculation(forceApply: true)
+        case .constant:
+            self.statusText = "\(targetRPM) RPM"
+            self.lastAppliedRPM = targetRPM
+            sendRPMCommand(rpm: targetRPM)
+        }
+    }
+
+    func selectPreset(_ preset: ConstantPreset) {
+        self.selectedPreset = preset
+        self.controlMode = .constant
+
+        let span = Double(maxRPM - minRPM)
+        let rpm: Int
+        switch preset {
+        case .quiet: rpm = minRPM
+        case .balanced: rpm = minRPM + Int(span * 0.25)
+        case .boost: rpm = minRPM + Int(span * 0.60)
+        case .max: rpm = maxRPM
+        }
+
+        setCustomRPM(rpm)
+    }
+
+    func setCustomRPM(_ rpm: Int) {
+        self.targetRPM = min(max(rpm, minRPM), maxRPM)
+        UserDefaults.standard.set(self.targetRPM, forKey: Keys.targetRPM)
+        self.controlMode = .constant
+        self.statusText = "\(targetRPM) RPM"
+        self.lastAppliedRPM = targetRPM
+        sendRPMCommand(rpm: targetRPM)
+    }
+
+    private func sendRPMCommand(rpm: Int) {
+        self.isApplying = true
+        Task {
+            let success = await helper.setFanSpeed(rpm: rpm)
+            if !success && self.controlMode != .auto {
+                self.controlMode = .auto
+            }
+            self.isApplying = false
+            self.updateFanSpeed()
+        }
+    }
+
+    private func sendAutoCommand() {
+        self.isApplying = true
+        Task {
+            _ = await helper.setAuto()
+            self.isApplying = false
+            self.updateFanSpeed()
+        }
+    }
+
+    private func updateStatusText() {
+        if !hasFans {
+            statusText = "No Fans"
+            return
+        }
+        switch controlMode {
+        case .auto:
+            statusText = "Auto"
+        case .curve:
+            statusText = "\(Int(currentSensorTemp))°C → \(targetRPM) RPM"
+        case .constant:
+            statusText = "\(targetRPM) RPM"
         }
     }
 
@@ -177,9 +326,17 @@ final class FanControlManager: ObservableObject {
         if !hasFans {
             return "No Fans"
         }
-        if currentMode == .auto {
+        if controlMode == .auto {
             return currentRPM > 0 ? "\(currentRPM)" : "Auto"
         }
         return "\(currentRPM)"
+    }
+
+    var curveProgressRatio: Double {
+        let tMin = Double(curveStartTemp)
+        let tMax = Double(max(curveMaxTemp, curveStartTemp + 5))
+        if currentSensorTemp <= tMin { return 0.0 }
+        if currentSensorTemp >= tMax { return 1.0 }
+        return (currentSensorTemp - tMin) / (tMax - tMin)
     }
 }

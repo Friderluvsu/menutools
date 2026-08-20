@@ -40,12 +40,20 @@ APP_DIR="$PROJECT_DIR/build/MenuTools.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-EXECUTABLE_PATH="$(swift build "${BUILD_ARGUMENTS[@]}" --show-bin-path)/MenuTools"
+BIN_DIR_PATH="$(swift build "${BUILD_ARGUMENTS[@]}" --show-bin-path)"
+EXECUTABLE_PATH="$BIN_DIR_PATH/MenuTools"
+HELPER_PATH="$BIN_DIR_PATH/menutools-smc-helper"
 
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR/bin"
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/MenuTools"
 chmod +x "$MACOS_DIR/MenuTools"
+
+if [ -f "$HELPER_PATH" ]; then
+    cp "$HELPER_PATH" "$RESOURCES_DIR/bin/menutools-smc-helper"
+    chmod 755 "$RESOURCES_DIR/bin/menutools-smc-helper"
+fi
+
 cp "$PROJECT_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
 
 if [ -d "$PROJECT_DIR/Resources" ]; then
