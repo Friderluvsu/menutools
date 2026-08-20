@@ -52,6 +52,12 @@ if [ -d "$PROJECT_DIR/Resources" ]; then
     cp -R "$PROJECT_DIR/Resources/." "$RESOURCES_DIR/"
 fi
 
+"$PROJECT_DIR/scripts/bundle_runtime.sh" "$APP_DIR"
+
+while IFS= read -r nested_code; do
+    codesign --force --sign - "$nested_code"
+done < <(find "$CONTENTS_DIR/Frameworks" "$RESOURCES_DIR/bin" -type f -print)
+
 codesign \
     --force \
     --deep \

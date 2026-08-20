@@ -5,8 +5,13 @@ if let previewFlagIndex = CommandLine.arguments.firstIndex(of: "--render-preview
 {
     let outputURL = URL(fileURLWithPath: CommandLine.arguments[previewFlagIndex + 1])
     let showSettings = CommandLine.arguments.contains("--settings")
+    let showAntiSleepPicker = CommandLine.arguments.contains("--anti-sleep-picker")
     let rendered = MainActor.assumeIsolated {
-        PreviewRenderer.render(to: outputURL, showSettings: showSettings)
+        PreviewRenderer.render(
+            to: outputURL,
+            showSettings: showSettings,
+            showAntiSleepPicker: showAntiSleepPicker
+        )
     }
     exit(rendered ? 0 : 1)
 }

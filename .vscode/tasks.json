@@ -22,6 +22,18 @@
       "type": "shell",
       "command": "make run",
       "problemMatcher": "$swiftc"
+    },
+    {
+      "label": "MenuTools: Package DMG",
+      "type": "shell",
+      "command": "make dmg",
+      "problemMatcher": "$swiftc"
+    },
+    {
+      "label": "MenuTools: Format Sources",
+      "type": "shell",
+      "command": "make format",
+      "problemMatcher": []
     }
   ]
 }

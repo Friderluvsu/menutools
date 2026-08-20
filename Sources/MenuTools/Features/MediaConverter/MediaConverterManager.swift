@@ -121,7 +121,13 @@ final class MediaConverterManager: ObservableObject {
     @Published var ffmpegPath: String?
 
     init(requestNotifications: Bool = true) {
-        self.ffmpegPath = Shell.which("ffmpeg") ?? "/opt/homebrew/bin/ffmpeg"
+        if let bundled = Bundle.main.url(forResource: "ffmpeg", withExtension: nil, subdirectory: "bin")?.path,
+            FileManager.default.isExecutableFile(atPath: bundled)
+        {
+            self.ffmpegPath = bundled
+        } else {
+            self.ffmpegPath = Shell.which("ffmpeg")
+        }
         self.outputDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         if requestNotifications {
             requestNotificationPermission()
@@ -179,7 +185,13 @@ final class MediaConverterManager: ObservableObject {
 
     private func convertTask(task: MediaTask) {
         let taskID = task.id
-        let ffmpeg = ffmpegPath ?? "/opt/homebrew/bin/ffmpeg"
+        guard let ffmpeg = ffmpegPath else {
+            if let currentIndex = tasks.firstIndex(where: { $0.id == task.id }) {
+                tasks[currentIndex].status = .failed(error: "Bundled FFmpeg runtime is unavailable")
+            }
+            startNextInQueue()
+            return
+        }
         let inputPath = task.inputURL.path
         let outDir = outputDirectory ?? task.inputURL.deletingLastPathComponent()
         let filenameBase = task.inputURL.deletingPathExtension().lastPathComponent

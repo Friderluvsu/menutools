@@ -86,7 +86,13 @@ make release
 make install
 ```
 
-Для ежедневной разработки доступны `make build`, `make run`, `make lint`, `make format` и `make preview`. Подробности — в [DEVELOPMENT.md](DEVELOPMENT.md).
+### Создание .dmg установщика (для отправки другим пользователям):
+```bash
+make dmg
+```
+Образ появится по пути `build/MenuTools.dmg`.
+
+Для ежедневной разработки доступны `make build`, `make release`, `make run`, `make dmg`, `make lint`, `make format` и `make preview`. Подробности — в [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ### Разрешения для iMessage:
 

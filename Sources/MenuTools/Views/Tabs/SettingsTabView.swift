@@ -8,6 +8,7 @@ struct SettingsTabView: View {
         VStack(spacing: MacToolsTheme.sectionSpacing) {
             permissionsCard
             iMessageDiagnosticsCard
+            spoofDPISettingsCard
             requirementsCard
             generalCard
             shortcutsCard
@@ -129,8 +130,10 @@ struct SettingsTabView: View {
                 RequirementRow(
                     title: "VanyaVPN", detail: "Only required for the VPN toggle", isAvailable: true, isOptional: true)
                 RequirementRow(
-                    title: "SpoofDPI", detail: "/opt/homebrew/bin/spoofdpi", isAvailable: spoofDPIIsAvailable,
-                    isOptional: true)
+                    title: "SpoofDPI",
+                    detail: appState.network.spoofDPIPath ?? "Not found",
+                    isAvailable: appState.network.isSpoofDPIAvailable
+                )
 
                 Text(
                     "Finder, Trash and DNS actions may ask for Automation or administrator approval when you run them."
@@ -142,10 +145,124 @@ struct SettingsTabView: View {
         }
     }
 
+    private var spoofDPISettingsCard: some View {
+        MacToolsCard(padding: 9) {
+            VStack(alignment: .leading, spacing: 8) {
+                SettingsSectionHeader(title: "SPOOFDPI", icon: "bolt.horizontal", color: .cyan)
+
+                HStack(spacing: 10) {
+                    SettingsLabel(title: "SOCKS5 endpoint", detail: "Local proxy address")
+                    Spacer(minLength: 8)
+                    Text("127.0.0.1")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Stepper(
+                        value: Binding(
+                            get: { appState.network.spoofPort },
+                            set: { appState.network.spoofPort = min(max($0, 1024), 65535) }
+                        ),
+                        in: 1024...65535
+                    ) {
+                        Text(String(appState.network.spoofPort))
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .frame(width: 34, alignment: .trailing)
+                    }
+                    .controlSize(.mini)
+                    .disabled(appState.network.isSpoofDPIRunning)
+                }
+
+                Divider().opacity(0.35)
+
+                HStack(spacing: 10) {
+                    SettingsLabel(title: "DNS", detail: "Resolution used by SpoofDPI")
+                    Spacer(minLength: 8)
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: { appState.network.spoofDNSMode },
+                            set: { appState.network.spoofDNSMode = $0 }
+                        )
+                    ) {
+                        ForEach(SpoofDNSMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(width: 92)
+                    .disabled(appState.network.isSpoofDPIRunning)
+                }
+
+                Divider().opacity(0.35)
+
+                HStack(spacing: 10) {
+                    SettingsLabel(
+                        title: "System proxy",
+                        detail: "Apply SOCKS5 automatically while running"
+                    )
+                    Spacer(minLength: 8)
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { appState.network.configureSystemProxy },
+                            set: { appState.network.configureSystemProxy = $0 }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .disabled(appState.network.isSpoofDPIRunning)
+                }
+
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(appState.network.isSpoofDPIRunning ? Color.green : Color.secondary.opacity(0.45))
+                        .frame(width: 6, height: 6)
+                    Text(
+                        appState.network.isSpoofDPIRunning
+                            ? "Running at \(appState.network.spoofEndpoint)"
+                            : "Ready · settings apply on next start"
+                    )
+                    .font(.system(size: 8.5))
+                    .foregroundStyle(.secondary)
+                    Spacer()
+                }
+
+                if let error = appState.network.errorMessage {
+                    Text(error)
+                        .font(.system(size: 8.5))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
     private var generalCard: some View {
         MacToolsCard(padding: 9) {
             VStack(alignment: .leading, spacing: 8) {
                 SettingsSectionHeader(title: "GENERAL", icon: "gearshape", color: .secondary)
+
+                HStack(spacing: 10) {
+                    SettingsLabel(title: "Menu bar icon", detail: "Icon shown in the macOS menu bar")
+                    Spacer(minLength: 8)
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: { appState.menuBarIconStyle },
+                            set: { appState.menuBarIconStyle = $0 }
+                        )
+                    ) {
+                        ForEach(MenuBarIconStyle.allCases) { style in
+                            Text(style.rawValue).tag(style)
+                        }
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(width: 160)
+                }
+
+                Divider().opacity(0.35)
 
                 HStack(spacing: 10) {
                     SettingsLabel(title: "Launch at Login", detail: "Start MenuTools after sign-in")
@@ -180,7 +297,7 @@ struct SettingsTabView: View {
                     }
                     .labelsHidden()
                     .controlSize(.small)
-                    .frame(width: 140)
+                    .frame(width: 160)
                 }
             }
         }
@@ -222,9 +339,6 @@ struct SettingsTabView: View {
         return FileManager.default.isExecutableFile(atPath: path)
     }
 
-    private var spoofDPIIsAvailable: Bool {
-        Shell.which("spoofdpi") != nil
-    }
 }
 
 private struct SettingsSectionHeader: View {

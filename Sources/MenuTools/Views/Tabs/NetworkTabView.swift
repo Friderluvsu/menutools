@@ -80,7 +80,7 @@ struct NetworkTabView: View {
 
                                 Text(
                                     network.isSpoofDPIRunning
-                                        ? "Proxy active on \(network.activeNetworkInterface):\(network.spoofPort)"
+                                        ? "Proxy active at \(network.spoofEndpoint)"
                                         : "DPI bypass is stopped"
                                 )
                                 .font(.system(size: 10))
@@ -110,7 +110,7 @@ struct NetworkTabView: View {
 
                         // Interface and Port settings
                         HStack {
-                            Text("Network Interface:")
+                            Text("Network service:")
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                             Text(network.activeNetworkInterface)
@@ -118,7 +118,7 @@ struct NetworkTabView: View {
 
                             Spacer()
 
-                            Text("Port: \(network.spoofPort)")
+                            Text("DNS: \(network.spoofDNSMode.title)")
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }

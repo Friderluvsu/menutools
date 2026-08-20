@@ -29,22 +29,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem.button {
-            let config = NSImage.SymbolConfiguration(pointSize: 13.5, weight: .semibold)
-            let image = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: "MenuTools")?
-                .withSymbolConfiguration(config)
-            image?.isTemplate = true
-            button.image = image
+            updateStatusItemIcon()
             button.imagePosition = .imageLeft
             button.action = #selector(togglePopover(_:))
             button.target = self
         }
 
-        // Update menu bar title asynchronously
-        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        // Update menu bar title and icon asynchronously
+        Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.updateStatusItemTitle()
+                self?.updateStatusItemIcon()
             }
         }
+    }
+
+    private func updateStatusItemIcon() {
+        guard let button = statusItem.button, let state = appState else { return }
+        let config = NSImage.SymbolConfiguration(pointSize: 13.5, weight: .medium)
+        let image = NSImage(systemSymbolName: state.menuBarIconStyle.symbolName, accessibilityDescription: "MenuTools")?
+            .withSymbolConfiguration(config)
+        image?.isTemplate = true
+        button.image = image
     }
 
     private func setupPopover() {

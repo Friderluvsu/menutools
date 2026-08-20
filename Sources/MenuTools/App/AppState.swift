@@ -16,6 +16,26 @@ enum UnifiedTab: String, CaseIterable, Identifiable {
     }
 }
 
+enum MenuBarIconStyle: String, CaseIterable, Identifiable {
+    case iceCube = "Ice Cube (Ice default)"
+    case iceCubeOutline = "Ice Outline"
+    case dots = "Dots (Ice)"
+    case chevron = "Chevron (Ice)"
+    case tools = "Tools"
+
+    var id: String { rawValue }
+
+    var symbolName: String {
+        switch self {
+        case .iceCube: return "cube.transparent.fill"
+        case .iceCubeOutline: return "cube.transparent"
+        case .dots: return "ellipsis"
+        case .chevron: return "chevron.left"
+        case .tools: return "wrench.and.screwdriver"
+        }
+    }
+}
+
 enum StatusItemDisplayMode: String, CaseIterable, Identifiable {
     case iconOnly = "Icon Only"
     case iconAndAntiSleep = "Icon + Anti-Sleep Timer"
@@ -28,6 +48,12 @@ enum StatusItemDisplayMode: String, CaseIterable, Identifiable {
 final class AppState: ObservableObject {
     @Published var selectedTab: UnifiedTab = .components
     @Published var statusDisplayMode: StatusItemDisplayMode = .iconOnly
+    @Published var menuBarIconStyle: MenuBarIconStyle = .iceCube {
+        didSet {
+            UserDefaults.standard.set(menuBarIconStyle.rawValue, forKey: "MenuBarIconStyle")
+            objectWillChange.send()
+        }
+    }
     @Published var launchAtLogin: Bool = false
     @Published var isShowingSettings: Bool = false
     @Published var isShowingSearch: Bool = false
@@ -40,6 +66,7 @@ final class AppState: ObservableObject {
     let converter: MediaConverterManager
     let systemMonitor = SystemMonitorManager()
     let systemUtils = SystemUtilsManager()
+    let fanControl = FanControlManager()
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -51,11 +78,18 @@ final class AppState: ObservableObject {
             self.statusDisplayMode = mode
         }
 
+        if let iconRaw = UserDefaults.standard.string(forKey: "MenuBarIconStyle"),
+            let style = MenuBarIconStyle(rawValue: iconRaw)
+        {
+            self.menuBarIconStyle = style
+        }
+
         checkLaunchAtLogin()
 
         // Forward changes from sub-managers to trigger menu bar icon updates
         antiSleep.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         network.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        fanControl.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
 
         ClipboardHUDWindowController.shared.setup(clipboardManager: clipboard)
     }

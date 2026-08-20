@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Foundation
 
 struct ClipboardItem: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
@@ -8,12 +9,36 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
     var timestamp: Date
     var isPinned: Bool = false
 
+    var charCount: Int {
+        text.count
+    }
+
+    var lineCount: Int {
+        text.components(separatedBy: .newlines).count
+    }
+
+    var timeAgoFormatted: String {
+        let seconds = Int(-timestamp.timeIntervalSinceNow)
+        if seconds < 10 { return "Just now" }
+        if seconds < 60 { return "\(seconds)s ago" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        let days = hours / 24
+        return "\(days)d ago"
+    }
+
     init(text: String, isPinned: Bool = false) {
         self.id = UUID()
         self.text = text
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let singleLine = trimmed.replacingOccurrences(of: "\n", with: " ")
-        self.snippet = singleLine.count > 100 ? String(singleLine.prefix(100)) + "..." : singleLine
+        let singleLine =
+            trimmed
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: "")
+        self.snippet = singleLine.count > 120 ? String(singleLine.prefix(120)) + "..." : singleLine
         self.timestamp = Date()
         self.isPinned = isPinned
     }
@@ -34,9 +59,10 @@ final class ClipboardManager: ObservableObject {
     var filteredItems: [ClipboardItem] {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if query.isEmpty {
-            return items
+            return sortedItems(items)
         }
-        return items.filter { $0.text.lowercased().contains(query) }
+        let matching = items.filter { $0.text.lowercased().contains(query) }
+        return sortedItems(matching)
     }
 
     init() {
@@ -59,39 +85,52 @@ final class ClipboardManager: ObservableObject {
             }
     }
 
-    private func checkPasteboard() {
+    func checkPasteboard() {
         let currentCount = NSPasteboard.general.changeCount
         guard currentCount != lastChangeCount else { return }
+
+        var copiedString: String? = NSPasteboard.general.string(forType: .string)
+        if copiedString == nil || copiedString?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+            if let str = NSPasteboard.general.readObjects(forClasses: [NSString.self], options: nil)?.first as? String {
+                copiedString = str
+            }
+        }
+
         lastChangeCount = currentCount
 
-        guard let copiedString = NSPasteboard.general.string(forType: .string),
-            !copiedString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard let text = copiedString,
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             return
         }
 
-        addClip(copiedString)
+        addClip(text)
     }
 
     func addClip(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        // Remove duplicate non-pinned item if exists
+        // If exact text already exists as pinned, update timestamp only
+        if let pinnedIndex = items.firstIndex(where: { $0.isPinned && $0.text == text }) {
+            items[pinnedIndex].timestamp = Date()
+            reorderAndSave()
+            return
+        }
+
+        // Remove duplicate unpinned item if exists
         items.removeAll { !$0.isPinned && $0.text == text }
 
         let newItem = ClipboardItem(text: text)
         items.insert(newItem, at: 0)
 
-        // Trim history
-        if items.count > maxHistoryItems {
-            let pinned = items.filter { $0.isPinned }
-            let unpinned = items.filter { !$0.isPinned }
-            let allowedUnpinned = max(0, maxHistoryItems - pinned.count)
-            items = pinned + Array(unpinned.prefix(allowedUnpinned))
-        }
+        // Trim unpinned history
+        let pinned = items.filter { $0.isPinned }
+        let unpinned = items.filter { !$0.isPinned }
+        let allowedUnpinned = max(0, maxHistoryItems - pinned.count)
+        items = pinned + Array(unpinned.prefix(allowedUnpinned))
 
-        saveHistory()
+        reorderAndSave()
     }
 
     func copyAndPaste(item: ClipboardItem, simulatePaste: Bool = true) {
@@ -99,26 +138,19 @@ final class ClipboardManager: ObservableObject {
         NSPasteboard.general.setString(item.text, forType: .string)
         lastChangeCount = NSPasteboard.general.changeCount
 
-        // Move to top of history
+        // Update timestamp and reposition
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
-            var updated = items.remove(at: idx)
-            updated.timestamp = Date()
-            items.insert(updated, at: 0)
-            saveHistory()
+            items[idx].timestamp = Date()
+            reorderAndSave()
         }
 
         if simulatePaste {
-            // Dismiss HUD first
-            ClipboardHUDWindowController.shared.hide()
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                Self.simulatePasteCommand()
-            }
+            ClipboardHUDWindowController.shared.hideAndPaste()
         }
     }
 
     static func simulatePasteCommand() {
-        let source = CGEventSource(stateID: .combinedSessionState)
+        guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
         let vKeyCode: CGKeyCode = 9  // Key 'V'
 
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true)
@@ -126,20 +158,23 @@ final class ClipboardManager: ObservableObject {
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false)
         keyUp?.flags = .maskCommand
 
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+        keyDown?.post(tap: .cgSessionEventTap)
+        usleep(15_000)
+        keyUp?.post(tap: .cgSessionEventTap)
     }
 
     func togglePin(id: UUID) {
         if let idx = items.firstIndex(where: { $0.id == id }) {
             items[idx].isPinned.toggle()
-            saveHistory()
+            items[idx].timestamp = Date()
+            reorderAndSave()
         }
     }
 
     func deleteItem(id: UUID) {
         items.removeAll { $0.id == id }
-        saveHistory()
+        reorderAndSave()
+        clampSelectedIndex()
     }
 
     func clearHistory() {
@@ -147,6 +182,29 @@ final class ClipboardManager: ObservableObject {
         items.removeAll { !$0.isPinned }
         NSPasteboard.general.clearContents()
         lastChangeCount = NSPasteboard.general.changeCount
+        reorderAndSave()
+        selectedIndex = 0
+    }
+
+    func clampSelectedIndex() {
+        let count = filteredItems.count
+        if count == 0 {
+            selectedIndex = 0
+        } else if selectedIndex >= count {
+            selectedIndex = count - 1
+        } else if selectedIndex < 0 {
+            selectedIndex = 0
+        }
+    }
+
+    private func sortedItems(_ list: [ClipboardItem]) -> [ClipboardItem] {
+        let pinned = list.filter { $0.isPinned }.sorted { $0.timestamp > $1.timestamp }
+        let unpinned = list.filter { !$0.isPinned }.sorted { $0.timestamp > $1.timestamp }
+        return pinned + unpinned
+    }
+
+    private func reorderAndSave() {
+        items = sortedItems(items)
         saveHistory()
     }
 
@@ -167,7 +225,7 @@ final class ClipboardManager: ObservableObject {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         if let saved = try? decoder.decode([ClipboardItem].self, from: data) {
-            self.items = saved
+            self.items = sortedItems(saved)
         }
     }
 }

@@ -17,6 +17,7 @@ If Apple Command Line Tools contain a patch-level Swift/SDK mismatch, `scripts/b
 ```bash
 make build      # debug bundle
 make release    # optimized bundle
+make dmg        # release build + package into MenuTools.dmg
 make run        # release build + launch from ./build
 make install    # release build + copy to /Applications
 make preview    # render dashboard/settings PNGs without opening the menu bar app

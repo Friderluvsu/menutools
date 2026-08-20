@@ -83,4 +83,29 @@ enum Shell {
         }
         return nil
     }
+
+    @discardableResult
+    static func runDetached(executable: String, arguments: [String], logPath: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        guard let logHandle = FileHandle(forWritingAtPath: logPath) else { return false }
+        process.standardOutput = logHandle
+        process.standardError = logHandle
+
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+        process.environment = env
+
+        do {
+            try process.run()
+            return true
+        } catch {
+            try? logHandle.write(contentsOf: Data(error.localizedDescription.utf8))
+            try? logHandle.close()
+            return false
+        }
+    }
 }

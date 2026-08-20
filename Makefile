@@ -1,4 +1,4 @@
-.PHONY: doctor build release run install preview lint format clean
+.PHONY: doctor build release run install preview lint format clean dmg
 
 doctor:
 	./scripts/doctor.sh
@@ -9,6 +9,9 @@ build:
 release:
 	./scripts/build.sh release
 
+dmg: release
+	./scripts/package_dmg.sh
+
 run: release
 	./scripts/run.sh
 
@@ -16,9 +19,7 @@ install: release
 	./scripts/install.sh
 
 preview: build
-	-killall MenuTools
-	open -W -n build/MenuTools.app --args --render-preview "$(CURDIR)/build/preview-dashboard.png"
-	open -W -n build/MenuTools.app --args --render-preview "$(CURDIR)/build/preview-settings.png" --settings
+	./scripts/preview.sh
 
 lint:
 	xcrun swift-format lint --recursive Sources

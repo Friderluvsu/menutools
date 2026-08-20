@@ -6,15 +6,25 @@ struct PopoverContentView: View {
     @State private var isDropTargeted = false
     @State private var copiedNotice: String?
     @State private var showSettings: Bool
+    @State private var showAntiSleepPicker: Bool
+    @State private var showFanControlPicker: Bool
+    @State private var showMediaPresetPicker = false
 
     private let twoColumns = [
         GridItem(.flexible(), spacing: MacToolsTheme.sectionSpacing),
         GridItem(.flexible(), spacing: MacToolsTheme.sectionSpacing),
     ]
 
-    init(appState: AppState, showSettings: Bool = false) {
+    init(
+        appState: AppState,
+        showSettings: Bool = false,
+        showAntiSleepPicker: Bool = false,
+        showFanControlPicker: Bool = false
+    ) {
         self.appState = appState
         _showSettings = State(initialValue: showSettings)
+        _showAntiSleepPicker = State(initialValue: showAntiSleepPicker)
+        _showFanControlPicker = State(initialValue: showFanControlPicker)
     }
 
     var body: some View {
@@ -46,12 +56,22 @@ struct PopoverContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .overlay {
+            if showAntiSleepPicker {
+                antiSleepPickerOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            }
+            if showFanControlPicker {
+                fanControlPickerOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            }
+        }
     }
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "wrench.and.screwdriver")
-                .font(.system(size: 11, weight: .regular))
+            Image(systemName: appState.menuBarIconStyle.symbolName)
+                .font(.system(size: 11.5, weight: .regular))
                 .foregroundStyle(.secondary)
                 .frame(width: 24, height: 24)
                 .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
@@ -106,7 +126,6 @@ struct PopoverContentView: View {
             quickToggles
             converterCard
             clipboardCard
-            antiSleepPresets
             systemActions
         }
         .frame(maxWidth: .infinity)
@@ -118,8 +137,17 @@ struct PopoverContentView: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 4), spacing: 5) {
                     MetricTile(title: "CPU", value: "\(Int(appState.systemMonitor.cpuUsage))%")
                     MetricTile(title: "RAM", value: String(format: "%.1fG", appState.systemMonitor.memoryUsedGB))
-                    MetricTile(title: "DOWN", value: formatSpeed(appState.systemMonitor.downloadSpeedKBps))
-                    MetricTile(title: "UP", value: formatSpeed(appState.systemMonitor.uploadSpeedKBps))
+                    MetricTile(title: "TEMP", value: "\(Int(appState.systemMonitor.cpuTemperature))°C")
+                    MetricTile(
+                        title: "FAN",
+                        value: appState.fanControl.hasFans ? "\(appState.fanControl.fanDisplayShort) RPM" : "No Fans",
+                        isInteractive: true,
+                        action: {
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                showFanControlPicker = true
+                            }
+                        }
+                    )
                 }
 
                 HStack(spacing: 6) {
@@ -142,7 +170,23 @@ struct PopoverContentView: View {
                 icon: "cup.and.saucer",
                 color: .orange,
                 isActive: appState.antiSleep.isActive,
-                action: appState.antiSleep.toggle
+                action: {
+                    if appState.antiSleep.isActive {
+                        appState.antiSleep.deactivate()
+                    } else {
+                        withAnimation(.easeOut(duration: 0.16)) {
+                            showAntiSleepPicker = true
+                        }
+                    }
+                }
+            )
+            ToolToggleCard(
+                title: "Messages Nav",
+                status: iMessageStatus,
+                icon: "message",
+                color: .blue,
+                isActive: appState.iMessage.isEnabled && appState.iMessage.isEventTapActive,
+                action: { appState.iMessage.isEnabled.toggle() }
             )
             ToolToggleCard(
                 title: "VanyaVPN",
@@ -163,14 +207,6 @@ struct PopoverContentView: View {
                 isActive: appState.network.isSpoofDPIRunning,
                 isWorking: appState.network.isSpoofTransitioning,
                 action: appState.network.toggleSpoofDPI
-            )
-            ToolToggleCard(
-                title: "Messages Nav",
-                status: iMessageStatus,
-                icon: "message",
-                color: .blue,
-                isActive: appState.iMessage.isEnabled && appState.iMessage.isEventTapActive,
-                action: { appState.iMessage.isEnabled.toggle() }
             )
         }
     }
@@ -209,30 +245,8 @@ struct PopoverContentView: View {
                     }
                 }
 
-                Picker(
-                    "Category",
-                    selection: Binding(
-                        get: { appState.converter.selectedCategory },
-                        set: { appState.converter.selectedCategory = $0 }
-                    )
-                ) {
-                    ForEach(MediaCategory.allCases) { category in
-                        Text(category.rawValue).tag(category)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
-
-                HStack(spacing: 8) {
-                    Text("Format")
-                        .font(.system(size: 9, weight: .regular))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 38, alignment: .leading)
-                    currentPresetPicker
-                        .frame(maxWidth: .infinity)
-                        .controlSize(.small)
-                }
+                mediaCategorySelector
+                mediaPresetMenu
 
                 dropZone
 
@@ -296,7 +310,7 @@ struct PopoverContentView: View {
                         .buttonStyle(.borderless)
                 }
 
-                let recentClips = Array(appState.clipboard.items.prefix(2))
+                let recentClips = Array(appState.clipboard.items.prefix(3))
                 if recentClips.isEmpty {
                     Text("Copied text will appear here")
                         .font(.system(size: 9.5))
@@ -306,22 +320,34 @@ struct PopoverContentView: View {
                     ForEach(Array(recentClips.enumerated()), id: \.element.id) { index, item in
                         Button {
                             appState.clipboard.copyAndPaste(item: item, simulatePaste: false)
-                            showToast("Copied item \(index + 1)")
+                            showToast("Copied clip #\(index + 1)")
                         } label: {
-                            HStack(spacing: 7) {
+                            HStack(spacing: 6) {
                                 Text("\(index + 1)")
                                     .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                                     .foregroundStyle(.secondary)
                                     .frame(width: 14)
+
+                                if item.isPinned {
+                                    Image(systemName: "pin.fill")
+                                        .font(.system(size: 7.5))
+                                        .foregroundStyle(.yellow)
+                                }
+
                                 Text(item.snippet)
                                     .font(.system(size: 9.5))
                                     .lineLimit(1)
                                     .truncationMode(.tail)
+
                                 Spacer(minLength: 0)
+
+                                Text(item.timeAgoFormatted)
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(.tertiary)
                             }
                             .padding(.horizontal, 7)
-                            .frame(maxWidth: .infinity, minHeight: 25)
-                            .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
+                            .frame(maxWidth: .infinity, minHeight: 24)
+                            .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
                     }
@@ -330,28 +356,227 @@ struct PopoverContentView: View {
         }
     }
 
-    private var antiSleepPresets: some View {
-        MacToolsCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("ANTI-SLEEP TIMER")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.secondary)
+    private var antiSleepPickerOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.42)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.easeIn(duration: 0.12)) { showAntiSleepPicker = false }
+                }
 
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 6), spacing: 5) {
-                    ForEach(AntiSleepManager.durations, id: \.seconds) { duration in
-                        Button(duration.label) { appState.antiSleep.selectDuration(duration.seconds) }
-                            .font(.system(size: 9, weight: .medium))
-                            .frame(maxWidth: .infinity, minHeight: 24)
-                            .background(
-                                appState.antiSleep.isActive && appState.antiSleep.selectedDuration == duration.seconds
-                                    ? Color.orange.opacity(0.20)
-                                    : Color.white.opacity(0.05),
-                                in: RoundedRectangle(cornerRadius: 6)
-                            )
+            MacToolsCard(padding: 12, cornerRadius: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "cup.and.saucer")
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundStyle(.orange)
+                            .frame(width: 28, height: 28)
+                            .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Keep Mac awake")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Choose how long Anti-Sleep should run")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button {
+                            withAnimation(.easeIn(duration: 0.12)) { showAntiSleepPicker = false }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .medium))
+                                .frame(width: 22, height: 22)
+                                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                        ForEach(AntiSleepManager.durations, id: \.seconds) { duration in
+                            Button {
+                                appState.antiSleep.activate(duration: duration.seconds)
+                                withAnimation(.easeIn(duration: 0.12)) { showAntiSleepPicker = false }
+                            } label: {
+                                VStack(spacing: 2) {
+                                    Text(duration.label)
+                                        .font(.system(size: 11, weight: .medium))
+                                    Text(antiSleepDurationCaption(duration.seconds))
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 38)
+                                .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(Color.white.opacity(0.06))
+                                )
+                            }
                             .buttonStyle(.plain)
+                        }
+                    }
+
+                    Toggle(
+                        "Keep display awake too",
+                        isOn: Binding(
+                            get: { appState.antiSleep.preventDisplaySleep },
+                            set: { appState.antiSleep.preventDisplaySleep = $0 }
+                        )
+                    )
+                    .font(.system(size: 9.5))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                }
+            }
+            .frame(width: 300)
+            .background(
+                Color(nsColor: .windowBackgroundColor).opacity(0.96),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+            .shadow(color: .black.opacity(0.28), radius: 22, y: 8)
+        }
+    }
+
+    private func antiSleepDurationCaption(_ seconds: Int) -> String {
+        switch seconds {
+        case 0: return "Until stopped"
+        case 900: return "15 minutes"
+        case 1800: return "30 minutes"
+        case 3600: return "1 hour"
+        case 7200: return "2 hours"
+        case 18000: return "5 hours"
+        default: return "Timer"
+        }
+    }
+
+    private var fanControlPickerOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.42)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.easeIn(duration: 0.12)) { showFanControlPicker = false }
+                }
+
+            MacToolsCard(padding: 12, cornerRadius: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "fan.fill")
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundStyle(.teal)
+                            .frame(width: 28, height: 28)
+                            .background(Color.teal.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Fan Control")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(
+                                appState.fanControl.hasFans
+                                    ? "Current: \(appState.fanControl.currentRPM) RPM · \(Int(appState.systemMonitor.cpuTemperature))°C"
+                                    : "No Fans detected (\(appState.fanControl.modelIdentifier))"
+                            )
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button {
+                            withAnimation(.easeIn(duration: 0.12)) { showFanControlPicker = false }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .medium))
+                                .frame(width: 22, height: 22)
+                                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if !appState.fanControl.hasFans {
+                        HStack(spacing: 5) {
+                            Image(systemName: "leaf.fill")
+                                .font(.system(size: 8.5))
+                                .foregroundStyle(.teal)
+                            Text("Fanless Mac (\(appState.fanControl.modelIdentifier)) · Passive cooling")
+                                .font(.system(size: 8.5, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.teal.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                        ForEach(FanMode.allCases) { mode in
+                            Button {
+                                appState.fanControl.selectMode(mode)
+                                if mode != .custom {
+                                    withAnimation(.easeIn(duration: 0.12)) { showFanControlPicker = false }
+                                }
+                            } label: {
+                                VStack(spacing: 2) {
+                                    Text(mode.label)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(
+                                            appState.fanControl.currentMode == mode ? Color.teal : Color.primary
+                                        )
+                                    Text(mode.caption)
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 38)
+                                .background(
+                                    appState.fanControl.currentMode == mode
+                                        ? Color.teal.opacity(0.14)
+                                        : Color.white.opacity(0.045),
+                                    in: RoundedRectangle(cornerRadius: 8)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(
+                                            appState.fanControl.currentMode == mode
+                                                ? Color.teal.opacity(0.4)
+                                                : Color.white.opacity(0.06)
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    if appState.fanControl.currentMode == .custom {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Target Speed")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(appState.fanControl.targetRPM) RPM")
+                                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(.teal)
+                            }
+                            Slider(
+                                value: Binding(
+                                    get: { Double(appState.fanControl.targetRPM) },
+                                    set: { appState.fanControl.setCustomRPM(Int($0)) }
+                                ),
+                                in: Double(appState.fanControl.minRPM)...Double(appState.fanControl.maxRPM),
+                                step: 100
+                            )
+                            .controlSize(.mini)
+                        }
+                        .padding(.top, 2)
                     }
                 }
             }
+            .frame(width: 300)
+            .background(
+                Color(nsColor: .windowBackgroundColor).opacity(0.96),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+            .shadow(color: .black.opacity(0.28), radius: 22, y: 8)
         }
     }
 
@@ -372,48 +597,150 @@ struct PopoverContentView: View {
         }
     }
 
-    @ViewBuilder
-    private var currentPresetPicker: some View {
+    private var mediaCategorySelector: some View {
+        HStack(spacing: 0) {
+            ForEach(MediaCategory.allCases) { category in
+                Button {
+                    appState.converter.selectedCategory = category
+                } label: {
+                    Text(category.rawValue)
+                        .font(
+                            .system(
+                                size: 10,
+                                weight: appState.converter.selectedCategory == category ? .medium : .regular
+                            )
+                        )
+                        .foregroundStyle(
+                            appState.converter.selectedCategory == category ? Color.primary : Color.secondary
+                        )
+                        .frame(maxWidth: .infinity, minHeight: 24)
+                        .background(
+                            appState.converter.selectedCategory == category
+                                ? Color.white.opacity(0.18)
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if category != MediaCategory.allCases.last {
+                    Divider()
+                        .frame(height: 12)
+                        .opacity(0.45)
+                }
+            }
+        }
+        .padding(2)
+        .frame(maxWidth: .infinity)
+        .background(MacToolsTheme.controlBackground, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(MacToolsTheme.borderColor)
+        )
+    }
+
+    private var mediaPresetMenu: some View {
+        Button {
+            showMediaPresetPicker.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                Text("Format")
+                    .font(.system(size: 9, weight: .regular))
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 8)
+
+                Text(currentPresetTitle)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 9)
+            .frame(maxWidth: .infinity, minHeight: 28)
+            .background(MacToolsTheme.controlBackground, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(MacToolsTheme.borderColor)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showMediaPresetPicker, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("OUTPUT FORMAT")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 2)
+
+                ForEach(Array(currentPresetOptions.enumerated()), id: \.offset) { _, option in
+                    Button {
+                        selectPreset(option)
+                        showMediaPresetPicker = false
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(option)
+                                .font(.system(size: 10))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            if option == currentPresetTitle {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                        .padding(.horizontal, 7)
+                        .frame(maxWidth: .infinity, minHeight: 24)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(8)
+            .frame(width: 250)
+        }
+    }
+
+    private var currentPresetTitle: String {
+        switch appState.converter.selectedCategory {
+        case .video: return appState.converter.selectedVideoPreset.rawValue
+        case .audio: return appState.converter.selectedAudioPreset.rawValue
+        case .gif: return appState.converter.selectedGIFPreset.rawValue
+        case .image: return appState.converter.selectedImagePreset.rawValue
+        }
+    }
+
+    private var currentPresetOptions: [String] {
+        switch appState.converter.selectedCategory {
+        case .video: return VideoPreset.allCases.map(\.rawValue)
+        case .audio: return AudioPreset.allCases.map(\.rawValue)
+        case .gif: return GIFQualityPreset.allCases.map(\.rawValue)
+        case .image: return ImagePreset.allCases.map(\.rawValue)
+        }
+    }
+
+    private func selectPreset(_ rawValue: String) {
         switch appState.converter.selectedCategory {
         case .video:
-            Picker(
-                "",
-                selection: Binding(
-                    get: { appState.converter.selectedVideoPreset },
-                    set: { appState.converter.selectedVideoPreset = $0 }
-                )
-            ) {
-                ForEach(VideoPreset.allCases) { Text($0.rawValue).tag($0) }
+            if let preset = VideoPreset(rawValue: rawValue) {
+                appState.converter.selectedVideoPreset = preset
             }
         case .audio:
-            Picker(
-                "",
-                selection: Binding(
-                    get: { appState.converter.selectedAudioPreset },
-                    set: { appState.converter.selectedAudioPreset = $0 }
-                )
-            ) {
-                ForEach(AudioPreset.allCases) { Text($0.rawValue).tag($0) }
+            if let preset = AudioPreset(rawValue: rawValue) {
+                appState.converter.selectedAudioPreset = preset
             }
         case .gif:
-            Picker(
-                "",
-                selection: Binding(
-                    get: { appState.converter.selectedGIFPreset },
-                    set: { appState.converter.selectedGIFPreset = $0 }
-                )
-            ) {
-                ForEach(GIFQualityPreset.allCases) { Text($0.rawValue).tag($0) }
+            if let preset = GIFQualityPreset(rawValue: rawValue) {
+                appState.converter.selectedGIFPreset = preset
             }
         case .image:
-            Picker(
-                "",
-                selection: Binding(
-                    get: { appState.converter.selectedImagePreset },
-                    set: { appState.converter.selectedImagePreset = $0 }
-                )
-            ) {
-                ForEach(ImagePreset.allCases) { Text($0.rawValue).tag($0) }
+            if let preset = ImagePreset(rawValue: rawValue) {
+                appState.converter.selectedImagePreset = preset
             }
         }
     }
@@ -476,19 +803,42 @@ private struct StatusBadge: View {
 private struct MetricTile: View {
     let title: String
     let value: String
+    var isInteractive: Bool = false
+    var action: (() -> Void)? = nil
 
     var body: some View {
+        Group {
+            if let action {
+                Button(action: action) {
+                    content
+                }
+                .buttonStyle(.plain)
+            } else {
+                content
+            }
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 2) {
             Text(title)
                 .font(.system(size: 7.5, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isInteractive ? Color.teal : Color.secondary)
             Text(value)
                 .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(isInteractive ? Color.teal : Color.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity, minHeight: 32)
-        .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
+        .background(
+            isInteractive ? Color.teal.opacity(0.10) : Color.white.opacity(0.035),
+            in: RoundedRectangle(cornerRadius: 7)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(isInteractive ? Color.teal.opacity(0.35) : Color.clear, lineWidth: 1)
+        )
     }
 }
 

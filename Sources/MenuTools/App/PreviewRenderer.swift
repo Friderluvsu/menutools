@@ -3,10 +3,14 @@ import SwiftUI
 
 @MainActor
 enum PreviewRenderer {
-    static func render(to outputURL: URL, showSettings: Bool) -> Bool {
+    static func render(to outputURL: URL, showSettings: Bool, showAntiSleepPicker: Bool = false) -> Bool {
         let appState = AppState(previewMode: true)
         let size = NSSize(width: MacToolsTheme.popoverWidth, height: MacToolsTheme.popoverHeight)
-        let rootView = PopoverContentView(appState: appState, showSettings: showSettings)
+        let rootView = PopoverContentView(
+            appState: appState,
+            showSettings: showSettings,
+            showAntiSleepPicker: showAntiSleepPicker
+        )
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.frame = NSRect(origin: .zero, size: size)
 

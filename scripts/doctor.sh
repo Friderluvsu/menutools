@@ -20,6 +20,9 @@ check_command swift
 check_command xcrun
 check_command codesign
 check_command ffmpeg
+check_command spoofdpi
+check_command otool
+check_command install_name_tool
 
 swift_version="$(swift --version 2>/dev/null | sed -n 's/.*Apple Swift version \([0-9][0-9.]*\).*/\1/p' | head -n 1)"
 sdk_path="$(xcrun --show-sdk-path 2>/dev/null || true)"
