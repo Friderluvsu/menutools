@@ -136,4 +136,19 @@ final class AppState: ObservableObject {
             return " \(vpn) | \(spoof)"
         }
     }
+
+    func onPopoverWillShow() {
+        systemMonitor.startMonitoring()
+        network.startPolling()
+        fanControl.startMonitoring()
+        systemUtils.checkCurrentStates()
+    }
+
+    func onPopoverDidClose() {
+        systemMonitor.stopMonitoring()
+        network.stopPolling()
+        if fanControl.controlMode != .curve {
+            fanControl.stopMonitoring()
+        }
+    }
 }

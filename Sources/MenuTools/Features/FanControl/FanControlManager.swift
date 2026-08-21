@@ -103,7 +103,7 @@ final class FanControlManager: ObservableObject {
     init() {
         loadSavedSettings()
         detectHardware()
-        if hasFans {
+        if hasFans && controlMode == .curve {
             startMonitoring()
         }
     }
@@ -176,7 +176,7 @@ final class FanControlManager: ObservableObject {
     }
 
     func startMonitoring() {
-        timerCancellable?.cancel()
+        guard timerCancellable == nil else { return }
         guard hasFans else { return }
 
         updateFanSpeed()
@@ -185,6 +185,11 @@ final class FanControlManager: ObservableObject {
             .sink { [weak self] _ in
                 self?.updateFanSpeed()
             }
+    }
+
+    func stopMonitoring() {
+        timerCancellable?.cancel()
+        timerCancellable = nil
     }
 
     private func updateFanSpeed() {
@@ -253,6 +258,7 @@ final class FanControlManager: ObservableObject {
             sendAutoCommand()
         case .curve:
             self.lastAppliedRPM = -1
+            startMonitoring()
             updateCurveCalculation(forceApply: true)
         case .constant:
             self.statusText = "\(targetRPM) RPM"

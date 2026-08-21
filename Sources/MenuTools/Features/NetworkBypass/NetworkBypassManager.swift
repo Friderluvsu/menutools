@@ -60,7 +60,6 @@ final class NetworkBypassManager: ObservableObject {
         }
 
         refreshStatus()
-        startPolling()
     }
 
     var spoofDPIPath: String? {
@@ -76,10 +75,16 @@ final class NetworkBypassManager: ObservableObject {
     var spoofEndpoint: String { "127.0.0.1:\(spoofPort)" }
 
     func startPolling() {
-        pollCancellable?.cancel()
+        guard pollCancellable == nil else { return }
+        refreshStatus()
         pollCancellable = Timer.publish(every: 3.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in self?.refreshStatus() }
+    }
+
+    func stopPolling() {
+        pollCancellable?.cancel()
+        pollCancellable = nil
     }
 
     func refreshStatus() {

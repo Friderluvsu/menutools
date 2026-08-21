@@ -78,7 +78,7 @@ final class ClipboardManager: ObservableObject {
 
     func startMonitoring() {
         timerCancellable?.cancel()
-        timerCancellable = Timer.publish(every: 0.5, on: .main, in: .common)
+        timerCancellable = Timer.publish(every: 0.75, tolerance: 0.25, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.checkPasteboard()

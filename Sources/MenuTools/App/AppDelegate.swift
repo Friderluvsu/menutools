@@ -3,10 +3,11 @@ import Carbon
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var appState: AppState!
+    private var currentIconStyle: MenuBarIconStyle?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Run purely as an accessory menu bar application (no Dock icon)
@@ -46,11 +47,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusItemIcon() {
         guard let button = statusItem.button, let state = appState else { return }
+        guard currentIconStyle != state.menuBarIconStyle else { return }
         let config = NSImage.SymbolConfiguration(pointSize: 13.5, weight: .medium)
         let image = NSImage(systemSymbolName: state.menuBarIconStyle.symbolName, accessibilityDescription: "MenuTools")?
             .withSymbolConfiguration(config)
         image?.isTemplate = true
         button.image = image
+        currentIconStyle = state.menuBarIconStyle
     }
 
     private func setupPopover() {
@@ -58,9 +61,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentSize = NSSize(width: MacToolsTheme.popoverWidth, height: MacToolsTheme.popoverHeight)
         popover.behavior = .transient
         popover.animates = false
+        popover.delegate = self
+    }
 
-        let contentView = PopoverContentView(appState: self.appState)
-        popover.contentViewController = NSHostingController(rootView: contentView)
+    private func ensurePopoverContent() {
+        if popover.contentViewController == nil {
+            let contentView = PopoverContentView(appState: self.appState)
+            popover.contentViewController = NSHostingController(rootView: contentView)
+        }
     }
 
     private func setupGlobalHotkeys() {
@@ -81,10 +89,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
-            // Position and show popover under menu item
+            ensurePopoverContent()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+
+    func popoverWillShow(_ notification: Notification) {
+        appState?.onPopoverWillShow()
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        appState?.onPopoverDidClose()
     }
 
     private func updateStatusItemTitle() {

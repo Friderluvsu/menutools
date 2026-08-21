@@ -23,18 +23,23 @@ final class SystemMonitorManager: ObservableObject {
     init() {
         self.memoryTotalGB = Double(ProcessInfo.processInfo.physicalMemory) / (1024 * 1024 * 1024)
         updateLocalIP()
-        fetchPublicIP()
-        updateStats()
-        startMonitoring()
     }
 
     func startMonitoring() {
-        cancellable?.cancel()
+        guard cancellable == nil else { return }
+        updateStats()
+        fetchPublicIP()
+        updateLocalIP()
         cancellable = Timer.publish(every: 2.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.updateStats()
             }
+    }
+
+    func stopMonitoring() {
+        cancellable?.cancel()
+        cancellable = nil
     }
 
     func updateStats() {
@@ -156,12 +161,48 @@ final class SystemMonitorManager: ObservableObject {
 
     func updateLocalIP() {
         Task.detached(priority: .utility) { [weak self] in
-            let (output, _) = Shell.run("ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null")
-            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            await MainActor.run { [weak self] in
-                if !trimmed.isEmpty {
-                    self?.localIP = trimmed
+            var address: String?
+            var ifaddr: UnsafeMutablePointer<ifaddrs>?
+            if getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr {
+                var ptr: UnsafeMutablePointer<ifaddrs>? = firstAddr
+                while let current = ptr {
+                    let interface = current.pointee
+                    let addrFamily = interface.ifa_addr.pointee.sa_family
+                    if addrFamily == UInt8(AF_INET) {
+                        let name = String(cString: interface.ifa_name)
+                        if name == "en0" || name == "en1" {
+                            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                            if getnameinfo(
+                                interface.ifa_addr,
+                                socklen_t(interface.ifa_addr.pointee.sa_len),
+                                &hostname,
+                                socklen_t(hostname.count),
+                                nil,
+                                0,
+                                NI_NUMERICHOST
+                            ) == 0 {
+                                let ip = hostname.withUnsafeBufferPointer { ptr in
+                                    ptr.baseAddress.map { String(cString: $0) }
+                                }
+                                if let validIP = ip {
+                                    if name == "en0" {
+                                        address = validIP
+                                        break
+                                    } else if address == nil {
+                                        address = validIP
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ptr = current.pointee.ifa_next
                 }
+                freeifaddrs(ifaddr)
+            }
+
+            let resolvedIP = address ?? "127.0.0.1"
+            await MainActor.run { [weak self] in
+                self?.localIP = resolvedIP
             }
         }
     }
