@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var popover: NSPopover!
     private var appState: AppState!
     private var currentIconStyle: MenuBarIconStyle?
+    private var lastBatteryPercentage: Int = -1
+    private var lastBatteryCharging: Bool = false
+    private var lastBatteryLowPower: Bool = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Run purely as an accessory menu bar application (no Dock icon)
@@ -47,13 +50,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func updateStatusItemIcon() {
         guard let button = statusItem.button, let state = appState else { return }
-        guard currentIconStyle != state.menuBarIconStyle else { return }
-        let config = NSImage.SymbolConfiguration(pointSize: 13.5, weight: .medium)
-        let image = NSImage(systemSymbolName: state.menuBarIconStyle.symbolName, accessibilityDescription: "MenuTools")?
-            .withSymbolConfiguration(config)
-        image?.isTemplate = true
-        button.image = image
-        currentIconStyle = state.menuBarIconStyle
+        let style = state.menuBarIconStyle
+
+        if style.isBatteryStyle {
+            let pct = state.battery.percentage
+            let charging = state.battery.isCharging
+            let lowPower = state.battery.isLowPowerMode
+            let hasBattery = state.battery.hasBattery
+            let showNumber = (style == .batteryRingNumber)
+
+            if currentIconStyle != style ||
+                lastBatteryPercentage != pct ||
+                lastBatteryCharging != charging ||
+                lastBatteryLowPower != lowPower
+            {
+                let image = BatteryIconRenderer.render(
+                    percentage: pct,
+                    isCharging: charging,
+                    isLowPowerMode: lowPower,
+                    hasBattery: hasBattery,
+                    showPercentageNumber: showNumber
+                )
+                button.image = image
+                currentIconStyle = style
+                lastBatteryPercentage = pct
+                lastBatteryCharging = charging
+                lastBatteryLowPower = lowPower
+            }
+        } else {
+            guard currentIconStyle != style else { return }
+            let config = NSImage.SymbolConfiguration(pointSize: 13.5, weight: .medium)
+            let image = NSImage(systemSymbolName: style.symbolName, accessibilityDescription: "MenuTools")?
+                .withSymbolConfiguration(config)
+            image?.isTemplate = true
+            button.image = image
+            currentIconStyle = style
+        }
     }
 
     private func setupPopover() {

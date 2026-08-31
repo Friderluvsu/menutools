@@ -259,7 +259,7 @@ struct SettingsTabView: View {
                     }
                     .labelsHidden()
                     .controlSize(.small)
-                    .frame(width: 160)
+                    .frame(width: 185)
                 }
 
                 Divider().opacity(0.35)

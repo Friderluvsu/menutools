@@ -17,6 +17,8 @@ enum UnifiedTab: String, CaseIterable, Identifiable {
 }
 
 enum MenuBarIconStyle: String, CaseIterable, Identifiable {
+    case batteryRing = "Battery Ring (Dynamic Color)"
+    case batteryRingNumber = "Battery Ring + %"
     case iceCube = "Ice Cube (Ice default)"
     case iceCubeOutline = "Ice Outline"
     case dots = "Dots (Ice)"
@@ -25,8 +27,13 @@ enum MenuBarIconStyle: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var isBatteryStyle: Bool {
+        self == .batteryRing || self == .batteryRingNumber
+    }
+
     var symbolName: String {
         switch self {
+        case .batteryRing, .batteryRingNumber: return "battery.100"
         case .iceCube: return "cube.transparent.fill"
         case .iceCubeOutline: return "cube.transparent"
         case .dots: return "ellipsis"
@@ -67,6 +74,7 @@ final class AppState: ObservableObject {
     let systemMonitor = SystemMonitorManager()
     let systemUtils = SystemUtilsManager()
     let fanControl = FanControlManager()
+    let battery = BatteryManager()
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -90,6 +98,7 @@ final class AppState: ObservableObject {
         antiSleep.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         network.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         fanControl.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        battery.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
 
         ClipboardHUDWindowController.shared.setup(clipboardManager: clipboard)
     }
