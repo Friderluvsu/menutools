@@ -32,6 +32,48 @@ enum Shell {
         }
     }
 
+    /// Runs a binary directly with an argument vector (no shell, so arguments are never interpreted).
+    /// Output is discarded: chatty tools like ffmpeg could otherwise fill an unread pipe and hang.
+    @discardableResult
+    static func run(executable: String, arguments: [String]) -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus
+        } catch {
+            return -1
+        }
+    }
+
+    @discardableResult
+    static func runPrivileged(_ command: String) -> (output: String, exitCode: Int32) {
+        // Try non-interactive sudo first
+        let direct = run("sudo -n \(command)")
+        if direct.exitCode == 0 {
+            return direct
+        }
+
+        // Fallback to AppleScript with administrator privileges
+        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "do shell script \"\(escaped)\" with administrator privileges"
+        var errorDict: NSDictionary?
+        if let appleScript = NSAppleScript(source: script) {
+            let result = appleScript.executeAndReturnError(&errorDict)
+            if let err = errorDict {
+                let msg = err[NSAppleScript.errorMessage] as? String ?? "Authorization failed"
+                return (msg, 1)
+            }
+            return (result.stringValue ?? "", 0)
+        }
+        return ("Failed to execute privileged command", 1)
+    }
+
     @discardableResult
     static func runAsync(_ command: String, completion: @Sendable @escaping (String, Int32) -> Void) -> Process? {
         let process = Process()

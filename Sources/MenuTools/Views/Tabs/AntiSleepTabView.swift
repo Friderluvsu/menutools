@@ -52,6 +52,21 @@ struct AntiSleepTabView: View {
                             .background(Color.orange.opacity(0.12))
                             .cornerRadius(6)
                         }
+
+                        if let error = antiSleep.lastError {
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.red)
+                                Text(error)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.red)
+                                Spacer()
+                            }
+                            .padding(8)
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(6)
+                        }
                     }
                 }
 

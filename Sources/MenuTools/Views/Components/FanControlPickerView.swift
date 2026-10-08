@@ -30,6 +30,8 @@ struct FanControlPickerView: View {
                 in: RoundedRectangle(cornerRadius: 14)
             )
             .shadow(color: .black.opacity(0.35), radius: 25, y: 10)
+            .fixedSize(horizontal: false, vertical: true)
+            .reportsPanelHeight(extra: 24)
         }
     }
 

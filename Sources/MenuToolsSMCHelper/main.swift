@@ -5,21 +5,21 @@ public let HELPER_VERSION = "1.1.0"
 
 public struct SMCParamStruct {
     public var key: UInt32 = 0
-    
+
     // vers (6 bytes)
     public var versMajor: UInt8 = 0
     public var versMinor: UInt8 = 0
     public var versBuild: UInt8 = 0
     public var versReserved: UInt8 = 0
     public var versRelease: UInt16 = 0
-    
+
     // pLimitData (16 bytes)
     public var pLimitVersion: UInt16 = 0
     public var pLimitLength: UInt16 = 0
     public var cpuPLimit: UInt32 = 0
     public var gpuPLimit: UInt32 = 0
     public var memPLimit: UInt32 = 0
-    
+
     // keyInfo (9 bytes + 3 padding = 12 bytes)
     public var dataSize: UInt32 = 0
     public var dataType: UInt32 = 0
@@ -27,29 +27,29 @@ public struct SMCParamStruct {
     public var padding0: UInt8 = 0
     public var padding1: UInt8 = 0
     public var padding2: UInt8 = 0
-    
+
     // result, status, data8 (3 bytes + 1 padding = 4 bytes)
     public var result: UInt8 = 0
     public var status: UInt8 = 0
     public var data8: UInt8 = 0
     public var padding3: UInt8 = 0
-    
+
     // data32 (4 bytes)
     public var data32: UInt32 = 0
-    
+
     // bytes (32 bytes)
     public var bytes: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
                        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
                        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
                        UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) =
                       (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
-    
+
     public init() {}
 }
 
 final class SMCDriverDirect {
     private var conn: io_connect_t = 0
-    
+
     init?() {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
         guard service != 0 else { return nil }
@@ -57,13 +57,13 @@ final class SMCDriverDirect {
         IOObjectRelease(service)
         guard kr == kIOReturnSuccess else { return nil }
     }
-    
+
     deinit {
         if conn != 0 {
             IOServiceClose(conn)
         }
     }
-    
+
     private func fourCharCode(_ str: String) -> UInt32 {
         var result: UInt32 = 0
         for char in str.utf8.prefix(4) {
@@ -71,7 +71,7 @@ final class SMCDriverDirect {
         }
         return result
     }
-    
+
     private func stringFromFourCharCode(_ code: UInt32) -> String {
         let bytes: [UInt8] = [
             UInt8((code >> 24) & 0xFF),
@@ -81,36 +81,36 @@ final class SMCDriverDirect {
         ]
         return String(bytes: bytes, encoding: .ascii) ?? "????"
     }
-    
+
     private func smcCall(input: inout SMCParamStruct, output: inout SMCParamStruct) -> kern_return_t {
         let inSize = MemoryLayout<SMCParamStruct>.stride
         var outSize = MemoryLayout<SMCParamStruct>.stride
         return IOConnectCallStructMethod(conn, 2, &input, inSize, &output, &outSize)
     }
-    
+
     func readKey(_ keyStr: String) -> (type: String, size: UInt32, bytes: [UInt8])? {
         var input = SMCParamStruct()
         var output = SMCParamStruct()
         input.key = fourCharCode(keyStr)
         input.data8 = 9 // SMC_CMD_READ_KEYINFO
-        
+
         guard smcCall(input: &input, output: &output) == kIOReturnSuccess && output.result == 0 else {
             return nil
         }
-        
+
         let size = output.dataSize
         let type = stringFromFourCharCode(output.dataType)
-        
+
         input = SMCParamStruct()
         output = SMCParamStruct()
         input.key = fourCharCode(keyStr)
         input.dataSize = size
         input.data8 = 5 // SMC_CMD_READ_BYTES
-        
+
         guard smcCall(input: &input, output: &output) == kIOReturnSuccess && output.result == 0 else {
             return nil
         }
-        
+
         var arr = [UInt8]()
         withUnsafeBytes(of: output.bytes) { raw in
             for i in 0..<Int(size) {
@@ -119,7 +119,7 @@ final class SMCDriverDirect {
         }
         return (type, size, arr)
     }
-    
+
     func writeKey(_ keyStr: String, typeStr: String, bytes: [UInt8]) -> Bool {
         var input = SMCParamStruct()
         var output = SMCParamStruct()
@@ -127,23 +127,23 @@ final class SMCDriverDirect {
         input.dataSize = UInt32(bytes.count)
         input.dataType = fourCharCode(typeStr)
         input.data8 = 6 // SMC_CMD_WRITE_BYTES
-        
+
         withUnsafeMutableBytes(of: &input.bytes) { raw in
             for i in 0..<bytes.count {
                 raw[i] = bytes[i]
             }
         }
-        
+
         let kr = smcCall(input: &input, output: &output)
         return kr == kIOReturnSuccess && output.result == 0
     }
-    
+
     func setAllFansSpeed(targetRPM: Float) -> Bool {
         _ = writeKey("Ftst", typeStr: "ui8 ", bytes: [1])
         let count = readKey("FNum").flatMap { $0.bytes.first.map(Int.init) } ?? 1
         var bitMask: UInt16 = 0
         var allOk = true
-        
+
         for i in 0..<max(1, count) {
             bitMask |= (1 << i)
             _ = writeKey("F\(i)Md", typeStr: "ui8 ", bytes: [1])
@@ -163,7 +163,7 @@ final class SMCDriverDirect {
         _ = writeKey("FS! ", typeStr: "ui16", bytes: [UInt8((bitMask >> 8) & 0xFF), UInt8(bitMask & 0xFF)])
         return allOk
     }
-    
+
     func setAllAuto() -> Bool {
         _ = writeKey("Ftst", typeStr: "ui8 ", bytes: [0])
         let count = readKey("FNum").flatMap { $0.bytes.first.map(Int.init) } ?? 1
@@ -227,7 +227,35 @@ if args.contains("auto") || args.contains("auto-all") {
         }
     }
     exit(0)
+} else if let idx = args.firstIndex(of: "disablesleep"), args.indices.contains(idx + 1) {
+    let val = args[idx + 1] == "1" ? "1" : "0"
+    setuid(0)
+    seteuid(0)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+    process.arguments = ["-a", "disablesleep", val]
+    do {
+        try process.run()
+        process.waitUntilExit()
+        exit(process.terminationStatus == 0 ? 0 : 1)
+    } catch {
+        exit(1)
+    }
+} else if let idx = args.firstIndex(of: "lowpowermode"), args.indices.contains(idx + 1) {
+    let val = args[idx + 1] == "1" ? "1" : "0"
+    setuid(0)
+    seteuid(0)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+    process.arguments = ["-a", "lowpowermode", val]
+    do {
+        try process.run()
+        process.waitUntilExit()
+        exit(process.terminationStatus == 0 ? 0 : 1)
+    } catch {
+        exit(1)
+    }
 } else {
-    print("Usage: menutools-smc-helper [set <rpm> | set <fanIndex> <rpm> | set-all <rpm> | auto | status | --version]")
+    print("Usage: menutools-smc-helper [set <rpm> | set <fanIndex> <rpm> | set-all <rpm> | auto | status | disablesleep <0|1> | lowpowermode <0|1> | --version]")
     exit(1)
 }

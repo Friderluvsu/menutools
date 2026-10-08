@@ -13,19 +13,23 @@ esac
 cd "$PROJECT_DIR"
 mkdir -p "$MODULE_CACHE"
 
+if [ -d "/Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk" ] && [ -z "${SDKROOT:-}" ]; then
+    export SDKROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk"
+fi
+
 export CLANG_MODULE_CACHE_PATH="$MODULE_CACHE"
 export SWIFTPM_MODULECACHE_OVERRIDE="$MODULE_CACHE"
 
 BUILD_ARGUMENTS=(--configuration "$CONFIGURATION" --disable-sandbox)
 
-swift_version="$(swift --version 2>/dev/null | sed -n 's/.*Apple Swift version \([0-9][0-9.]*\).*/\1/p' | head -n 1)"
+swift_version="$(swift --version 2>/dev/null | sed -n 's/.*(swiftlang-\([0-9.]*\).*/\1/p' | head -n 1)"
 sdk_path="$(xcrun --show-sdk-path 2>/dev/null || true)"
 sdk_swift_version=""
 
 if [ -n "$sdk_path" ]; then
     swift_interface="$(find "$sdk_path/usr/lib/swift/Swift.swiftmodule" -name '*-apple-macos.swiftinterface' -print 2>/dev/null | head -n 1)"
     if [ -n "$swift_interface" ]; then
-        sdk_swift_version="$(sed -n 's#// swift-compiler-version: Apple Swift version \([0-9][0-9.]*\).*#\1#p' "$swift_interface" | head -n 1)"
+        sdk_swift_version="$(sed -n 's#.*(swiftlang-\([0-9.]*\).*#\1#p' "$swift_interface" | head -n 1)"
     fi
 fi
 

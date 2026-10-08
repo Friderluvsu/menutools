@@ -34,6 +34,12 @@ final class SystemUtilsManager: ObservableObject {
         }
     }
 
+    func autoResetGoogleDriveHelper() {
+        Task.detached(priority: .utility) {
+            _ = Shell.run("pluginkit -e ignore -i com.google.drivefs.finderhelper.findersync 2>/dev/null")
+        }
+    }
+
     func resetGoogleDriveHelper() {
         runAction("Resetting Google Drive FinderSync...") {
             let (output, code) = Shell.run("pluginkit -e ignore -i com.google.drivefs.finderhelper.findersync")

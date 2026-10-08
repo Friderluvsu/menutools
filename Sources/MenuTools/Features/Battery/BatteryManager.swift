@@ -13,6 +13,7 @@ final class BatteryManager: ObservableObject {
 
     private var runLoopSource: CFRunLoopSource?
     private var cancellables = Set<AnyCancellable>()
+    private var refreshPending = false
 
     init() {
         refreshBatteryState()
@@ -20,24 +21,24 @@ final class BatteryManager: ObservableObject {
         setupLowPowerModeObserver()
     }
 
+    deinit {
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+    }
+
+    /// Reads the power source once. Event driven (IOPS notification), never polled; every
+    /// property is assigned only when it changed so unchanged notifications cause no re-render.
     func refreshBatteryState() {
-        self.isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        let lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        if isLowPowerMode != lowPower { isLowPowerMode = lowPower }
 
-        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else {
-            self.hasBattery = false
-            self.percentage = 100
-            self.isPluggedIn = true
+        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+            let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef], !list.isEmpty
+        else {
+            apply(found: false, percentage: 100, charging: nil, pluggedIn: true, remaining: nil)
             return
         }
-
-        guard let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef], !list.isEmpty else {
-            self.hasBattery = false
-            self.percentage = 100
-            self.isPluggedIn = true
-            return
-        }
-
-        var foundBattery = false
 
         for source in list {
             guard let desc = IOPSGetPowerSourceDescription(blob, source)?.takeUnretainedValue() as? [String: Any] else {
@@ -45,34 +46,42 @@ final class BatteryManager: ObservableObject {
             }
 
             let type = desc[kIOPSTypeKey as String] as? String
-            if type == (kIOPSInternalBatteryType as String) || desc[kIOPSCurrentCapacityKey as String] != nil {
-                foundBattery = true
-                let curCap = desc[kIOPSCurrentCapacityKey as String] as? Int ?? 100
-                let maxCap = desc[kIOPSMaxCapacityKey as String] as? Int ?? 100
-                let charging = desc[kIOPSIsChargingKey as String] as? Bool ?? false
-                let state = desc[kIOPSPowerSourceStateKey as String] as? String ?? ""
+            guard type == (kIOPSInternalBatteryType as String) || desc[kIOPSCurrentCapacityKey as String] != nil
+            else { continue }
 
-                let pct = maxCap > 0 ? Int((Double(curCap) / Double(maxCap)) * 100.0) : curCap
-                self.percentage = max(0, min(100, pct))
-                self.isCharging = charging
-                self.isPluggedIn = (state == (kIOPSACPowerValue as String)) || charging
+            let curCap = desc[kIOPSCurrentCapacityKey as String] as? Int ?? 100
+            let maxCap = desc[kIOPSMaxCapacityKey as String] as? Int ?? 100
+            let charging = desc[kIOPSIsChargingKey as String] as? Bool ?? false
+            let state = desc[kIOPSPowerSourceStateKey as String] as? String ?? ""
 
-                if let timeToEmpty = desc[kIOPSTimeToEmptyKey as String] as? Int, timeToEmpty > 0 {
-                    let h = timeToEmpty / 60
-                    let m = timeToEmpty % 60
-                    self.timeRemainingFormatted = "\(h)h \(m)m remaining"
-                } else if let timeToFull = desc[kIOPSTimeToFullChargeKey as String] as? Int, timeToFull > 0 {
-                    let h = timeToFull / 60
-                    let m = timeToFull % 60
-                    self.timeRemainingFormatted = "\(h)h \(m)m until full"
-                } else {
-                    self.timeRemainingFormatted = nil
-                }
-                break
+            let pct = maxCap > 0 ? Int((Double(curCap) / Double(maxCap)) * 100.0) : curCap
+
+            var remaining: String?
+            if let timeToEmpty = desc[kIOPSTimeToEmptyKey as String] as? Int, timeToEmpty > 0 {
+                remaining = "\(timeToEmpty / 60)h \(timeToEmpty % 60)m remaining"
+            } else if let timeToFull = desc[kIOPSTimeToFullChargeKey as String] as? Int, timeToFull > 0 {
+                remaining = "\(timeToFull / 60)h \(timeToFull % 60)m until full"
             }
+
+            apply(
+                found: true,
+                percentage: max(0, min(100, pct)),
+                charging: charging,
+                pluggedIn: (state == (kIOPSACPowerValue as String)) || charging,
+                remaining: remaining
+            )
+            return
         }
 
-        self.hasBattery = foundBattery
+        apply(found: false, percentage: percentage, charging: nil, pluggedIn: isPluggedIn, remaining: nil)
+    }
+
+    private func apply(found: Bool, percentage: Int, charging: Bool?, pluggedIn: Bool, remaining: String?) {
+        if self.percentage != percentage { self.percentage = percentage }
+        if let charging, isCharging != charging { isCharging = charging }
+        if isPluggedIn != pluggedIn { isPluggedIn = pluggedIn }
+        if timeRemainingFormatted != remaining { timeRemainingFormatted = remaining }
+        if hasBattery != found { hasBattery = found }
     }
 
     private func setupPowerNotification() {
@@ -80,9 +89,8 @@ final class BatteryManager: ObservableObject {
         let source = IOPSNotificationCreateRunLoopSource({ context in
             guard let context = context else { return }
             let manager = Unmanaged<BatteryManager>.fromOpaque(context).takeUnretainedValue()
-            Task { @MainActor in
-                manager.refreshBatteryState()
-            }
+            // The source lives on the main run loop, so this already runs on the main thread.
+            MainActor.assumeIsolated { manager.scheduleRefresh() }
         }, context)?.takeRetainedValue()
 
         if let source = source {
@@ -91,14 +99,43 @@ final class BatteryManager: ObservableObject {
         }
     }
 
+    /// Power notifications arrive in bursts (percent, time remaining, adapter); handle each burst once.
+    private func scheduleRefresh() {
+        guard !refreshPending else { return }
+        refreshPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.refreshPending = false
+                self.refreshBatteryState()
+            }
+        }
+    }
+
     private func setupLowPowerModeObserver() {
         NotificationCenter.default.publisher(for: NSNotification.Name.NSProcessInfoPowerStateDidChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                self.isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
-                self.objectWillChange.send()
+                let enabled = ProcessInfo.processInfo.isLowPowerModeEnabled
+                if self.isLowPowerMode != enabled { self.isLowPowerMode = enabled }
             }
             .store(in: &cancellables)
+    }
+
+    func toggleLowPowerMode() {
+        let target = !isLowPowerMode
+        setLowPowerMode(enabled: target)
+    }
+
+    func setLowPowerMode(enabled: Bool) {
+        Task { [weak self] in
+            let success = await SMCHelperManager.shared.setLowPowerMode(enabled: enabled)
+            guard let self = self else { return }
+            if success {
+                if self.isLowPowerMode != enabled { self.isLowPowerMode = enabled }
+                self.refreshBatteryState()
+            }
+        }
     }
 }

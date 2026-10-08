@@ -1,399 +1,589 @@
 import AppKit
 import SwiftUI
 
+/// Settings is split into short pages so the panel always fits its content without scrolling.
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general = "General"
+    case windows = "Windows"
+    case messages = "Messages"
+    case network = "Network"
+
+    var id: String { rawValue }
+}
+
 struct SettingsTabView: View {
     @ObservedObject var appState: AppState
+    /// Not forwarded through AppState, so observed directly for live status rows.
+    @ObservedObject private var iMessage: IMessageHelper
+    @ObservedObject private var shelf = ShelfManager.shared
+    @State private var isAddingCustomException: Bool = false
+    @State private var customBundleId: String = ""
+    @AppStorage("SettingsSection") private var section: SettingsSection = .general
+
+    init(appState: AppState) {
+        self.appState = appState
+        _iMessage = ObservedObject(wrappedValue: appState.iMessage)
+    }
 
     var body: some View {
         VStack(spacing: MacToolsTheme.sectionSpacing) {
-            permissionsCard
-            iMessageDiagnosticsCard
-            spoofDPISettingsCard
-            requirementsCard
-            generalCard
-            shortcutsCard
-            appInfoCard
+            Picker("", selection: $section) {
+                ForEach(SettingsSection.allCases) { section in
+                    Text(section.rawValue).tag(section)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.bottom, 2)
+
+            switch section {
+            case .general:
+                generalCard
+                shelfCard
+                AILimitsSettingsCard(manager: appState.aiLimits)
+                appInfoCard
+            case .windows:
+                permissionsCard
+                windowControlsCard
+            case .messages:
+                messagesCard
+                shortcutsCard
+            case .network:
+                spoofDPICard
+                requirementsCard
+            }
         }
         .frame(maxWidth: .infinity)
         .onAppear {
             appState.iMessage.refreshPermissions()
+            appState.windowManager.refreshPermissions()
         }
     }
+
+    // MARK: - Permissions
 
     private var permissionsCard: some View {
-        MacToolsCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 8) {
-                SettingsSectionHeader(title: "PERMISSIONS", icon: "hand.raised", color: .orange)
+        SettingsCard(title: "Permissions", icon: "hand.raised", color: .orange) {
+            PermissionRow(
+                title: "Accessibility",
+                isGranted: appState.windowManager.isAccessibilityGranted || appState.iMessage.isAccessibilityGranted,
+                action: appState.windowManager.openAccessibilitySettings
+            )
+            Divider().opacity(0.35)
+            PermissionRow(
+                title: "Input Monitoring",
+                isGranted: appState.iMessage.isInputMonitoringGranted,
+                action: appState.iMessage.openInputMonitoringSettings
+            )
+            Divider().opacity(0.35)
+            PermissionRow(
+                title: "Keyboard Control",
+                isGranted: appState.iMessage.isKeystrokePostingGranted,
+                action: appState.iMessage.requestPermissions
+            )
 
-                PermissionRow(
-                    title: "Accessibility",
-                    detail: "Intercept ↑ and ↓ in Messages",
-                    isGranted: appState.iMessage.isAccessibilityGranted,
-                    actionTitle: "Open"
-                ) {
-                    appState.iMessage.openAccessibilitySettings()
-                }
-
-                Divider().opacity(0.35)
-
-                PermissionRow(
-                    title: "Input Monitoring",
-                    detail: "Listen only while Messages is active",
-                    isGranted: appState.iMessage.isInputMonitoringGranted,
-                    actionTitle: "Open"
-                ) {
-                    appState.iMessage.openInputMonitoringSettings()
-                }
-
-                Divider().opacity(0.35)
-
-                PermissionRow(
-                    title: "Keyboard control",
-                    detail: "Send ⌃Tab and ⌃⇧Tab",
-                    isGranted: appState.iMessage.isKeystrokePostingGranted,
-                    actionTitle: "Request"
-                ) {
+            HStack(spacing: 6) {
+                Button("Request All") {
+                    appState.windowManager.requestPermissions()
                     appState.iMessage.requestPermissions()
                 }
-
-                HStack(spacing: 6) {
-                    Button("Request required access") {
-                        appState.iMessage.requestPermissions()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.mini)
-
-                    Button("Refresh") {
-                        appState.iMessage.refreshPermissions()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                }
-            }
-        }
-    }
-
-    private var iMessageDiagnosticsCard: some View {
-        MacToolsCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 7) {
-                SettingsSectionHeader(title: "MESSAGES SHORTCUTS", icon: "message", color: .blue)
-
-                DiagnosticRow(
-                    label: "Listener", value: appState.iMessage.isEventTapActive ? "Running" : "Stopped",
-                    isHealthy: appState.iMessage.isEventTapActive)
-                DiagnosticRow(
-                    label: "Frontmost app", value: appState.iMessage.isMessagesActive ? "Messages" : "Another app",
-                    isHealthy: appState.iMessage.isMessagesActive)
-                DiagnosticRow(
-                    label: "Status", value: appState.iMessage.permissionSummary,
-                    isHealthy: appState.iMessage.isEventTapActive)
-
-                if let lastShortcut = appState.iMessage.lastShortcut {
-                    DiagnosticRow(label: "Last event", value: lastShortcut, isHealthy: true)
-                }
-
-                if let errorMessage = appState.iMessage.errorMessage {
-                    Text(errorMessage)
-                        .font(.system(size: 9, weight: .regular))
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                HStack(spacing: 8) {
-                    Button("Test previous") { appState.iMessage.testPreviousInMessages() }
-                    Button("Test next") { appState.iMessage.testNextInMessages() }
+                .buttonStyle(.borderedProminent)
+                Button("Refresh") {
+                    appState.windowManager.refreshPermissions()
+                    appState.iMessage.refreshPermissions()
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.mini)
-
-                Text(
-                    "The test activates Messages, then sends the same shortcuts as the original Keyboard Maestro macro."
-                )
-                .font(.system(size: 8.5))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             }
+            .controlSize(.small)
+            .padding(.top, 2)
         }
     }
 
-    private var requirementsCard: some View {
-        MacToolsCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 7) {
-                SettingsSectionHeader(title: "REQUIREMENTS", icon: "checklist", color: .green)
+    // MARK: - Window controls
 
-                RequirementRow(
-                    title: "FFmpeg",
-                    detail: appState.converter.ffmpegPath ?? "Not found",
-                    isAvailable: ffmpegIsAvailable
-                )
-                RequirementRow(title: "macOS", detail: "14.0 or newer", isAvailable: true)
-                RequirementRow(
-                    title: "VanyaVPN", detail: "Only required for the VPN toggle", isAvailable: true, isOptional: true)
-                RequirementRow(
-                    title: "SpoofDPI",
-                    detail: appState.network.spoofDPIPath ?? "Not found",
-                    isAvailable: appState.network.isSpoofDPIAvailable
-                )
-
-                Text(
-                    "Finder, Trash and DNS actions may ask for Automation or administrator approval when you run them."
-                )
-                .font(.system(size: 8.5))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private var windowControlsCard: some View {
+        SettingsCard(title: "Window Controls", icon: "macwindow", color: .green) {
+            SettingsRow(title: "Maximize on green click") {
+                toggle(
+                    get: { appState.windowManager.isMaximizeOnGreenEnabled },
+                    set: { appState.windowManager.isMaximizeOnGreenEnabled = $0 })
             }
-        }
-    }
 
-    private var spoofDPISettingsCard: some View {
-        MacToolsCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 8) {
-                SettingsSectionHeader(title: "SPOOFDPI", icon: "bolt.horizontal", color: .cyan)
-
-                HStack(spacing: 10) {
-                    SettingsLabel(title: "SOCKS5 endpoint", detail: "Local proxy address")
-                    Spacer(minLength: 8)
-                    Text("127.0.0.1")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Stepper(
-                        value: Binding(
-                            get: { appState.network.spoofPort },
-                            set: { appState.network.spoofPort = min(max($0, 1024), 65535) }
-                        ),
-                        in: 1024...65535
-                    ) {
-                        Text(String(appState.network.spoofPort))
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .frame(width: 34, alignment: .trailing)
-                    }
-                    .controlSize(.mini)
-                    .disabled(appState.network.isSpoofDPIRunning)
+            if appState.windowManager.isMaximizeOnGreenEnabled {
+                SettingsRow(title: "Smooth animation", isSecondary: true) {
+                    toggle(
+                        get: { appState.windowManager.isAnimateResizeEnabled },
+                        set: { appState.windowManager.isAnimateResizeEnabled = $0 })
                 }
-
-                Divider().opacity(0.35)
-
-                HStack(spacing: 10) {
-                    SettingsLabel(title: "DNS", detail: "Resolution used by SpoofDPI")
-                    Spacer(minLength: 8)
-                    Picker(
-                        "",
-                        selection: Binding(
-                            get: { appState.network.spoofDNSMode },
-                            set: { appState.network.spoofDNSMode = $0 }
-                        )
-                    ) {
-                        ForEach(SpoofDNSMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .frame(width: 92)
-                    .disabled(appState.network.isSpoofDPIRunning)
-                }
-
-                Divider().opacity(0.35)
-
-                HStack(spacing: 10) {
-                    SettingsLabel(
-                        title: "System proxy",
-                        detail: "Apply SOCKS5 automatically while running"
-                    )
-                    Spacer(minLength: 8)
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { appState.network.configureSystemProxy },
-                            set: { appState.network.configureSystemProxy = $0 }
-                        )
-                    )
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .disabled(appState.network.isSpoofDPIRunning)
-                }
-
-                HStack(spacing: 7) {
-                    Circle()
-                        .fill(appState.network.isSpoofDPIRunning ? Color.green : Color.secondary.opacity(0.45))
-                        .frame(width: 6, height: 6)
-                    Text(
-                        appState.network.isSpoofDPIRunning
-                            ? "Running at \(appState.network.spoofEndpoint)"
-                            : "Ready · settings apply on next start"
-                    )
-                    .font(.system(size: 8.5))
-                    .foregroundStyle(.secondary)
-                    Spacer()
-                }
-
-                if let error = appState.network.errorMessage {
-                    Text(error)
-                        .font(.system(size: 8.5))
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                .padding(.leading, 12)
             }
-        }
-    }
 
-    private var generalCard: some View {
-        MacToolsCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 8) {
-                SettingsSectionHeader(title: "GENERAL", icon: "gearshape", color: .secondary)
+            Divider().opacity(0.35)
 
-                HStack(spacing: 10) {
-                    SettingsLabel(title: "Menu bar icon", detail: "Icon shown in the macOS menu bar")
-                    Spacer(minLength: 8)
+            SettingsRow(title: "Quit on red click") {
+                toggle(
+                    get: { appState.windowManager.isQuitOnCloseEnabled },
+                    set: { appState.windowManager.isQuitOnCloseEnabled = $0 })
+            }
+
+            if appState.windowManager.isQuitOnCloseEnabled {
+                SettingsRow(title: "Quit mode", isSecondary: true) {
                     Picker(
                         "",
                         selection: Binding(
-                            get: { appState.menuBarIconStyle },
-                            set: { appState.menuBarIconStyle = $0 }
-                        )
+                            get: { appState.windowManager.quitOnCloseMode },
+                            set: { appState.windowManager.quitOnCloseMode = $0 })
                     ) {
-                        ForEach(MenuBarIconStyle.allCases) { style in
-                            Text(style.rawValue).tag(style)
-                        }
-                    }
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .frame(width: 185)
-                }
-
-                Divider().opacity(0.35)
-
-                HStack(spacing: 10) {
-                    SettingsLabel(title: "Launch at Login", detail: "Start MenuTools after sign-in")
-                    Spacer(minLength: 8)
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { appState.launchAtLogin },
-                            set: { _ in appState.toggleLaunchAtLogin() }
-                        )
-                    )
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                }
-
-                Divider().opacity(0.35)
-
-                HStack(spacing: 10) {
-                    SettingsLabel(title: "Menu bar text", detail: "Optional live status beside the icon")
-                    Spacer(minLength: 8)
-                    Picker(
-                        "",
-                        selection: Binding(
-                            get: { appState.statusDisplayMode },
-                            set: { appState.setStatusDisplayMode($0) }
-                        )
-                    ) {
-                        ForEach(StatusItemDisplayMode.allCases) { mode in
+                        ForEach(QuitOnCloseMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
                     }
                     .labelsHidden()
                     .controlSize(.small)
-                    .frame(width: 160)
+                    .frame(width: 130)
+                }
+                .padding(.leading, 12)
+            }
+
+            Divider().opacity(0.35)
+
+            DiagnosticRow(
+                label: "Listener",
+                value: appState.windowManager.isEventTapActive
+                    ? "Running"
+                    : (appState.windowManager.isAccessibilityGranted ? "Off" : "No access"),
+                isHealthy: appState.windowManager.isEventTapActive)
+
+            if !appState.windowManager.isAccessibilityGranted
+                && (appState.windowManager.isMaximizeOnGreenEnabled || appState.windowManager.isQuitOnCloseEnabled)
+            {
+                HStack {
+                    Text("Needs Accessibility")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("Grant") { appState.windowManager.requestPermissions() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+            }
+
+            Divider().opacity(0.35)
+
+            excludedApps
+        }
+    }
+
+    private var excludedApps: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Excluded apps")
+                    .font(.system(size: 11, weight: .medium))
+                Spacer()
+                Menu {
+                    let runningApps = appState.windowManager.getRunningGUIApps()
+                    if runningApps.isEmpty {
+                        Text("No other running apps")
+                    } else {
+                        ForEach(runningApps, id: \.bundleId) { app in
+                            Button(app.name) {
+                                appState.windowManager.addException(bundleId: app.bundleId, name: app.name)
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Custom identifier…") {
+                        isAddingCustomException.toggle()
+                    }
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .fixedSize()
+            }
+
+            if isAddingCustomException {
+                HStack(spacing: 6) {
+                    TextField("com.example.app", text: $customBundleId)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                    Button("Add") {
+                        let id = customBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !id.isEmpty {
+                            appState.windowManager.addException(bundleId: id, name: id)
+                            customBundleId = ""
+                            isAddingCustomException = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(customBundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .controlSize(.small)
+                }
+            }
+
+            if appState.windowManager.exceptions.isEmpty {
+                Text("None")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(appState.windowManager.exceptions) { exception in
+                        HStack(spacing: 6) {
+                            Text(exception.name)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                            Text(exception.id)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 4)
+                            Button {
+                                appState.windowManager.removeException(bundleId: exception.id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                    }
                 }
             }
         }
     }
 
-    private var shortcutsCard: some View {
-        MacToolsCard(padding: 9) {
-            VStack(alignment: .leading, spacing: 6) {
-                SettingsSectionHeader(title: "SHORTCUTS", icon: "keyboard", color: .purple)
-                ShortcutRow(shortcut: "⌥⌘V", description: "Open Clipboard HUD")
-                ShortcutRow(shortcut: "↑ / ↓", description: "Previous / next Messages chat")
-                ShortcutRow(shortcut: "⌃⇧Tab / ⌃Tab", description: "Commands sent to Messages")
-                ShortcutRow(shortcut: "⌥⌫", description: "Delete current conversation")
+    // MARK: - Messages
+
+    private var messagesCard: some View {
+        SettingsCard(title: "Messages", icon: "message", color: .blue) {
+            SettingsRow(title: "Navigation shortcuts") {
+                toggle(
+                    get: { appState.iMessage.isEnabled },
+                    set: { appState.iMessage.isEnabled = $0 })
             }
+
+            Divider().opacity(0.35)
+
+            DiagnosticRow(
+                label: "Listener",
+                value: appState.iMessage.isEventTapActive ? "Running" : "Stopped",
+                isHealthy: appState.iMessage.isEventTapActive)
+            DiagnosticRow(
+                label: "Status",
+                value: appState.iMessage.permissionSummary,
+                isHealthy: appState.iMessage.isEventTapActive)
+            if let lastShortcut = appState.iMessage.lastShortcut {
+                DiagnosticRow(label: "Last event", value: lastShortcut, isHealthy: true)
+            }
+
+            if let errorMessage = appState.iMessage.errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 8) {
+                Button("Test Prev") { appState.iMessage.testPreviousInMessages() }
+                Button("Test Next") { appState.iMessage.testNextInMessages() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    // MARK: - SpoofDPI
+
+    private var spoofDPICard: some View {
+        SettingsCard(title: "SpoofDPI", icon: "bolt.horizontal", color: .cyan) {
+            SettingsRow(title: "Port") {
+                Stepper(
+                    value: Binding(
+                        get: { appState.network.spoofPort },
+                        set: { appState.network.spoofPort = min(max($0, 1024), 65535) }
+                    ),
+                    in: 1024...65535
+                ) {
+                    Text(String(appState.network.spoofPort))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                }
+                .controlSize(.small)
+                .disabled(appState.network.isSpoofDPIRunning)
+            }
+
+            Divider().opacity(0.35)
+
+            SettingsRow(title: "DNS") {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { appState.network.spoofDNSMode },
+                        set: { appState.network.spoofDNSMode = $0 })
+                ) {
+                    ForEach(SpoofDNSMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 100)
+                .disabled(appState.network.isSpoofDPIRunning)
+            }
+
+            SettingsRow(title: "System proxy") {
+                toggle(
+                    get: { appState.network.configureSystemProxy },
+                    set: { appState.network.configureSystemProxy = $0 })
+                    .disabled(appState.network.isSpoofDPIRunning)
+            }
+
+            Divider().opacity(0.35)
+
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(appState.network.isSpoofDPIRunning ? Color.green : Color.secondary.opacity(0.45))
+                    .frame(width: 7, height: 7)
+                Text(appState.network.isSpoofDPIRunning ? appState.network.spoofEndpoint : "Stopped")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            if let error = appState.network.errorMessage {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: - Requirements
+
+    private var requirementsCard: some View {
+        SettingsCard(title: "Requirements", icon: "checklist", color: .green) {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                GridRow {
+                    RequirementRow(
+                        title: "FFmpeg", isAvailable: ffmpegIsAvailable, help: appState.converter.ffmpegPath)
+                    RequirementRow(
+                        title: "SpoofDPI",
+                        isAvailable: appState.network.isSpoofDPIAvailable,
+                        help: appState.network.spoofDPIPath)
+                }
+                GridRow {
+                    RequirementRow(title: "macOS 14.0+", isAvailable: true)
+                    RequirementRow(title: "VanyaVPN", isAvailable: true, isOptional: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - General
+
+    private var generalCard: some View {
+        SettingsCard(title: "General", icon: "gearshape", color: .secondary) {
+            SettingsRow(title: "Menu bar icon") {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { appState.menuBarIconStyle },
+                        set: { appState.menuBarIconStyle = $0 })
+                ) {
+                    ForEach(MenuBarIconStyle.allCases) { style in
+                        Label(style.rawValue, systemImage: style.symbolName).tag(style)
+                    }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 190)
+            }
+
+            Divider().opacity(0.35)
+
+            SettingsRow(title: "Menu bar label") {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { appState.statusDisplayMode },
+                        set: { appState.setStatusDisplayMode($0) })
+                ) {
+                    ForEach(StatusItemDisplayMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 190)
+            }
+
+            Divider().opacity(0.35)
+
+            SettingsRow(title: "Universal Control auto-enable") {
+                toggle(
+                    get: { appState.universalControl.isAutoEnableEnabled },
+                    set: { appState.universalControl.isAutoEnableEnabled = $0 })
+            }
+
+            SettingsRow(title: "Launch at login") {
+                toggle(
+                    get: { appState.launchAtLogin },
+                    set: { _ in appState.toggleLaunchAtLogin() })
+            }
+        }
+    }
+
+    // MARK: - Shelf
+
+    private var shelfCard: some View {
+        SettingsCard(title: "Shelf", icon: "tray.full", color: .secondary) {
+            SettingsRow(title: "Enabled") {
+                toggle(get: { shelf.isEnabled }, set: { shelf.isEnabled = $0 })
+            }
+            SettingsRow(title: "Show on file drag", isSecondary: true) {
+                toggle(get: { shelf.showOnDrag }, set: { shelf.showOnDrag = $0 })
+                    .disabled(!shelf.isEnabled)
+            }
+            .padding(.leading, 12)
+        }
+    }
+
+    // MARK: - Shortcuts & info
+
+    private var shortcutsCard: some View {
+        SettingsCard(title: "Shortcuts", icon: "keyboard", color: .purple) {
+            ShortcutRow(shortcut: "⌥⌘V", description: "Clipboard")
+            ShortcutRow(shortcut: "↑ ↓", description: "Previous / next chat")
+            ShortcutRow(shortcut: "⌥⌫", description: "Delete chat")
+            ShortcutRow(shortcut: "Green click", description: "Maximize")
+            ShortcutRow(shortcut: "Red click", description: "Close / quit")
         }
     }
 
     private var appInfoCard: some View {
-        MacToolsCard(padding: 9) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("MenuTools 1.0")
-                        .font(.system(size: 10.5, weight: .semibold))
-                    Text("Native Swift · local data · menu bar only")
-                        .font(.system(size: 8.5))
-                        .foregroundStyle(.secondary)
-                }
+        MacToolsCard(padding: 8) {
+            HStack {
+                Text("MenuTools 1.0")
+                    .font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
                     .buttonStyle(.bordered)
-                    .controlSize(.mini)
+                    .controlSize(.small)
                     .tint(.red)
             }
         }
     }
+
+    // MARK: - Helpers
 
     private var ffmpegIsAvailable: Bool {
         guard let path = appState.converter.ffmpegPath else { return false }
         return FileManager.default.isExecutableFile(atPath: path)
     }
 
-}
-
-private struct SettingsSectionHeader: View {
-    let title: String
-    let icon: String
-    let color: Color
-
-    var body: some View {
-        Label(title, systemImage: icon)
-            .font(.system(size: 8, weight: .semibold))
-            .foregroundStyle(color)
+    private func toggle(get: @escaping () -> Bool, set: @escaping (Bool) -> Void) -> some View {
+        Toggle("", isOn: Binding(get: get, set: set))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
     }
 }
 
-private struct SettingsLabel: View {
-    let title: String
-    let detail: String
+// MARK: - AI Limits
+
+private struct AILimitsSettingsCard: View {
+    @ObservedObject var manager: AILimitsManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 10, weight: .medium))
-            Text(detail)
-                .font(.system(size: 8.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        SettingsCard(title: "AI Limits", icon: "sparkles", color: .secondary) {
+            ForEach(Array(AIProvider.allCases.enumerated()), id: \.element) { index, provider in
+                if index > 0 { Divider().opacity(0.35) }
+                SettingsRow(title: provider.displayName) {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { manager.enabledProviders.contains(provider) },
+                            set: { manager.setEnabled(provider, $0) })
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                }
+            }
         }
+    }
+}
+
+// MARK: - Building blocks
+
+/// Card with a readable header; every settings section uses this so spacing and type stay consistent.
+private struct SettingsCard<Content: View>: View {
+    let title: String
+    let icon: String
+    let color: Color
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        MacToolsCard(padding: 8) {
+            VStack(alignment: .leading, spacing: 5) {
+                Label(title, systemImage: icon)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(color)
+                content
+            }
+        }
+    }
+}
+
+/// Single row: title on the left, control on the right.
+private struct SettingsRow<Trailing: View>: View {
+    let title: String
+    var isSecondary = false
+    @ViewBuilder let trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.system(size: 11.5, weight: isSecondary ? .regular : .medium))
+                .foregroundStyle(isSecondary ? .secondary : .primary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            trailing
+        }
+        .frame(minHeight: 22)
     }
 }
 
 private struct PermissionRow: View {
     let title: String
-    let detail: String
     let isGranted: Bool
-    let actionTitle: String
     let action: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: isGranted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                 .foregroundStyle(isGranted ? .green : .orange)
-                .font(.system(size: 12))
-                .frame(width: 16)
-            SettingsLabel(title: title, detail: detail)
+                .font(.system(size: 13))
+            Text(title)
+                .font(.system(size: 11.5, weight: .medium))
             Spacer(minLength: 6)
             if isGranted {
                 Text("Granted")
-                    .font(.system(size: 8.5, weight: .semibold))
+                    .font(.system(size: 11))
                     .foregroundStyle(.green)
             } else {
-                Button(actionTitle, action: action)
+                Button("Open", action: action)
                     .buttonStyle(.bordered)
-                    .controlSize(.mini)
+                    .controlSize(.small)
             }
         }
+        .frame(minHeight: 24)
     }
 }
 
@@ -406,24 +596,25 @@ private struct DiagnosticRow: View {
         HStack(spacing: 7) {
             Circle()
                 .fill(isHealthy ? Color.green : Color.orange)
-                .frame(width: 6, height: 6)
+                .frame(width: 7, height: 7)
             Text(label)
-                .font(.system(size: 9))
+                .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             Text(value)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isHealthy ? Color.primary : Color.orange)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
         }
+        .frame(minHeight: 22)
     }
 }
 
 private struct RequirementRow: View {
     let title: String
-    let detail: String
     let isAvailable: Bool
     var isOptional = false
+    var help: String? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -431,18 +622,14 @@ private struct RequirementRow: View {
                 systemName: isAvailable
                     ? "checkmark.circle.fill" : (isOptional ? "minus.circle.fill" : "xmark.circle.fill")
             )
+            .font(.system(size: 13))
             .foregroundStyle(isAvailable ? .green : (isOptional ? .secondary : .red))
-            .frame(width: 16)
             Text(title)
-                .font(.system(size: 9.5, weight: .medium))
-                .frame(width: 68, alignment: .leading)
-            Text(detail)
-                .font(.system(size: 8.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .font(.system(size: 11.5, weight: .medium))
             Spacer(minLength: 0)
         }
+        .frame(minHeight: 22)
+        .help(help ?? "")
     }
 }
 
@@ -452,16 +639,15 @@ private struct ShortcutRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(description)
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
             Text(shortcut)
-                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                .lineLimit(1)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .padding(.horizontal, 7)
-                .frame(minHeight: 20)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                .frame(minWidth: 62, minHeight: 20)
+                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+            Text(description)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
     }
 }

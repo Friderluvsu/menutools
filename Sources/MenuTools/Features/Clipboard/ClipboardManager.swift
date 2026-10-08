@@ -14,7 +14,15 @@ struct ClipboardItem: Identifiable, Codable, Equatable {
     }
 
     var lineCount: Int {
-        text.components(separatedBy: .newlines).count
+        // Same result as components(separatedBy: .newlines).count without allocating the pieces.
+        var breaks = 0
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 0x0A...0x0D, 0x85, 0x2028, 0x2029: breaks += 1
+            default: break
+            }
+        }
+        return breaks + 1
     }
 
     var timeAgoFormatted: String {
@@ -52,18 +60,23 @@ final class ClipboardManager: ObservableObject {
     @Published var selectedIndex: Int = 0
     @Published var maxHistoryItems: Int = 100
 
+    /// Filtered list, recomputed only when items or the (debounced) query change — not on every view update.
+    @Published private(set) var visibleItems: [ClipboardItem] = []
+
     private var lastChangeCount: Int = 0
     private var timerCancellable: AnyCancellable?
+    private var visibleItemsCancellable: AnyCancellable?
+    /// The query `visibleItems` was last filtered with.
+    private var filteredQuery: String = ""
+    private var terminateObserver: NSObjectProtocol?
+    private var pendingSave: DispatchWorkItem?
     private let storageURL: URL
+    /// One serial queue so writes can never land out of order.
+    private let saveQueue = DispatchQueue(label: "MenuTools.ClipboardSave", qos: .utility)
+    /// Clips bigger than this are not kept (a single huge copy would sit in RAM and in the JSON file).
+    private static let maxClipBytes = 2_000_000
 
-    var filteredItems: [ClipboardItem] {
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if query.isEmpty {
-            return sortedItems(items)
-        }
-        let matching = items.filter { $0.text.lowercased().contains(query) }
-        return sortedItems(matching)
-    }
+    var filteredItems: [ClipboardItem] { visibleItems }
 
     init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -74,11 +87,50 @@ final class ClipboardManager: ObservableObject {
         loadHistory()
         self.lastChangeCount = NSPasteboard.general.changeCount
         startMonitoring()
+        startFiltering()
+
+        // The save is debounced, so make sure the last change reaches disk on quit.
+        terminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flushPendingSave(wait: true) }
+        }
+    }
+
+    private func startFiltering() {
+        let debouncedQuery = $searchQuery
+            .removeDuplicates()
+            .debounce(for: .milliseconds(120), scheduler: RunLoop.main)
+
+        visibleItemsCancellable = Publishers.CombineLatest($items, debouncedQuery)
+            .sink { [weak self] items, query in
+                guard let self else { return }
+                self.filteredQuery = query
+                self.visibleItems = self.filter(items, query: query)
+            }
+        visibleItems = sortedItems(items)
+    }
+
+    /// Catches `visibleItems` up with the query right away, so a key pressed within the debounce
+    /// window acts on the list the user is about to see, not the stale one.
+    func flushFilter() {
+        guard searchQuery != filteredQuery else { return }
+        filteredQuery = searchQuery
+        visibleItems = filter(items, query: searchQuery)
+    }
+
+    /// Case-insensitive substring search without copying each clip's text.
+    private func filter(_ list: [ClipboardItem], query raw: String) -> [ClipboardItem] {
+        let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return sortedItems(list) }
+        let matching = list.filter { $0.text.range(of: query, options: .caseInsensitive) != nil }
+        return sortedItems(matching)
     }
 
     func startMonitoring() {
         timerCancellable?.cancel()
-        timerCancellable = Timer.publish(every: 0.75, tolerance: 0.25, on: .main, in: .common)
+        // changeCount is an O(1) read; the HUD forces an extra check when it opens.
+        timerCancellable = Timer.publish(every: 1.0, tolerance: 0.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.checkPasteboard()
@@ -98,7 +150,7 @@ final class ClipboardManager: ObservableObject {
 
         lastChangeCount = currentCount
 
-        guard let text = copiedString,
+        guard let text = copiedString, text.utf8.count <= Self.maxClipBytes,
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             return
@@ -111,26 +163,24 @@ final class ClipboardManager: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        var list = items
+
         // If exact text already exists as pinned, update timestamp only
-        if let pinnedIndex = items.firstIndex(where: { $0.isPinned && $0.text == text }) {
-            items[pinnedIndex].timestamp = Date()
-            reorderAndSave()
+        if let pinnedIndex = list.firstIndex(where: { $0.isPinned && $0.text == text }) {
+            list[pinnedIndex].timestamp = Date()
+            commit(list)
             return
         }
 
         // Remove duplicate unpinned item if exists
-        items.removeAll { !$0.isPinned && $0.text == text }
-
-        let newItem = ClipboardItem(text: text)
-        items.insert(newItem, at: 0)
+        list.removeAll { !$0.isPinned && $0.text == text }
+        list.insert(ClipboardItem(text: text), at: 0)
 
         // Trim unpinned history
-        let pinned = items.filter { $0.isPinned }
-        let unpinned = items.filter { !$0.isPinned }
+        let pinned = list.filter { $0.isPinned }
+        let unpinned = list.filter { !$0.isPinned }
         let allowedUnpinned = max(0, maxHistoryItems - pinned.count)
-        items = pinned + Array(unpinned.prefix(allowedUnpinned))
-
-        reorderAndSave()
+        commit(pinned + Array(unpinned.prefix(allowedUnpinned)))
     }
 
     func copyAndPaste(item: ClipboardItem, simulatePaste: Bool = true) {
@@ -140,8 +190,9 @@ final class ClipboardManager: ObservableObject {
 
         // Update timestamp and reposition
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
-            items[idx].timestamp = Date()
-            reorderAndSave()
+            var list = items
+            list[idx].timestamp = Date()
+            commit(list)
         }
 
         if simulatePaste {
@@ -165,24 +216,23 @@ final class ClipboardManager: ObservableObject {
 
     func togglePin(id: UUID) {
         if let idx = items.firstIndex(where: { $0.id == id }) {
-            items[idx].isPinned.toggle()
-            items[idx].timestamp = Date()
-            reorderAndSave()
+            var list = items
+            list[idx].isPinned.toggle()
+            list[idx].timestamp = Date()
+            commit(list)
         }
     }
 
     func deleteItem(id: UUID) {
-        items.removeAll { $0.id == id }
-        reorderAndSave()
+        commit(items.filter { $0.id != id })
         clampSelectedIndex()
     }
 
     func clearHistory() {
         // Keep pinned items
-        items.removeAll { !$0.isPinned }
         NSPasteboard.general.clearContents()
         lastChangeCount = NSPasteboard.general.changeCount
-        reorderAndSave()
+        commit(items.filter { $0.isPinned })
         selectedIndex = 0
     }
 
@@ -198,26 +248,45 @@ final class ClipboardManager: ObservableObject {
     }
 
     private func sortedItems(_ list: [ClipboardItem]) -> [ClipboardItem] {
-        let pinned = list.filter { $0.isPinned }.sorted { $0.timestamp > $1.timestamp }
-        let unpinned = list.filter { !$0.isPinned }.sorted { $0.timestamp > $1.timestamp }
+        let byNewest: (ClipboardItem, ClipboardItem) -> Bool = { $0.timestamp > $1.timestamp }
+        let pinned = list.filter { $0.isPinned }.sorted(by: byNewest)
+        let unpinned = list.filter { !$0.isPinned }.sorted(by: byNewest)
         return pinned + unpinned
     }
 
-    private func reorderAndSave() {
-        items = sortedItems(items)
-        saveHistory()
+    /// Sorts, publishes `items` exactly once (one filter pass, one view update) and schedules a save.
+    private func commit(_ list: [ClipboardItem]) {
+        items = sortedItems(list)
+        scheduleSave()
     }
 
-    private func saveHistory() {
-        let itemsToSave = items
-        let url = storageURL
-        Task.detached {
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            if let data = try? encoder.encode(itemsToSave) {
-                try? data.write(to: url, options: .atomic)
+    /// Coalesces bursts of changes into a single background write.
+    private func scheduleSave() {
+        pendingSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.flushPendingSave() }
+        }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+    }
+
+    private func flushPendingSave(wait: Bool = false) {
+        if let pending = pendingSave {
+            pending.cancel()
+            pendingSave = nil
+
+            let itemsToSave = items
+            let url = storageURL
+            saveQueue.async {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                if let data = try? encoder.encode(itemsToSave) {
+                    try? data.write(to: url, options: .atomic)
+                }
             }
         }
+        // On quit, block until the write has finished.
+        if wait { saveQueue.sync {} }
     }
 
     private func loadHistory() {

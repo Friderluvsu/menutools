@@ -197,7 +197,9 @@ final class MediaConverterManager: ObservableObject {
         let filenameBase = task.inputURL.deletingPathExtension().lastPathComponent
 
         let outputURL: URL
-        var command = ""
+        // Arguments go straight to the process (no shell), so any file name is passed through literally.
+        var executable = ffmpeg
+        var arguments: [String] = []
 
         switch task.category {
         case .video:
@@ -207,28 +209,21 @@ final class MediaConverterManager: ObservableObject {
 
             switch preset {
             case .mp4H264:
-                command =
-                    "\(ffmpeg) -y -i \"\(inputPath)\" -c:v libx264 -preset medium -crf 22 -c:a aac -b:a 192k \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-c:v", "libx264", "-preset", "medium", "-crf", "22", "-c:a", "aac", "-b:a", "192k", outputURL.path]
             case .mp4HEVC:
-                command =
-                    "\(ffmpeg) -y -i \"\(inputPath)\" -c:v libx265 -crf 26 -tag:v hvc1 -c:a aac -b:a 160k \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-c:v", "libx265", "-crf", "26", "-tag:v", "hvc1", "-c:a", "aac", "-b:a", "160k", outputURL.path]
             case .movProRes:
-                command =
-                    "\(ffmpeg) -y -i \"\(inputPath)\" -c:v prores_ks -profile:v 3 -c:a pcm_s16le \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-c:v", "prores_ks", "-profile:v", "3", "-c:a", "pcm_s16le", outputURL.path]
             case .webm:
-                command =
-                    "\(ffmpeg) -y -i \"\(inputPath)\" -c:v libvpx-vp9 -crf 30 -b:v 0 -c:a libopus \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-c:a", "libopus", outputURL.path]
             case .mkv:
-                command = "\(ffmpeg) -y -i \"\(inputPath)\" -c copy \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-c", "copy", outputURL.path]
             case .compressDiscord:
-                command =
-                    "\(ffmpeg) -y -i \"\(inputPath)\" -c:v libx264 -crf 30 -preset fast -fs 24M -c:a aac -b:a 128k \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-c:v", "libx264", "-crf", "30", "-preset", "fast", "-fs", "24M", "-c:a", "aac", "-b:a", "128k", outputURL.path]
             case .compressTelegram:
-                command =
-                    "\(ffmpeg) -y -i \"\(inputPath)\" -c:v libx264 -crf 28 -preset fast -fs 48M -c:a aac -b:a 128k \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-c:v", "libx264", "-crf", "28", "-preset", "fast", "-fs", "48M", "-c:a", "aac", "-b:a", "128k", outputURL.path]
             case .compressStandard:
-                command =
-                    "\(ffmpeg) -y -i \"\(inputPath)\" -c:v libx264 -crf 27 -preset slow -c:a aac -b:a 128k \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-c:v", "libx264", "-crf", "27", "-preset", "slow", "-c:a", "aac", "-b:a", "128k", outputURL.path]
             }
 
         case .audio:
@@ -238,15 +233,15 @@ final class MediaConverterManager: ObservableObject {
 
             switch preset {
             case .mp3High:
-                command = "\(ffmpeg) -y -i \"\(inputPath)\" -vn -c:a libmp3lame -b:a 320k \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-vn", "-c:a", "libmp3lame", "-b:a", "320k", outputURL.path]
             case .mp3Standard:
-                command = "\(ffmpeg) -y -i \"\(inputPath)\" -vn -c:a libmp3lame -b:a 192k \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", outputURL.path]
             case .m4aAAC:
-                command = "\(ffmpeg) -y -i \"\(inputPath)\" -vn -c:a aac -b:a 256k \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-vn", "-c:a", "aac", "-b:a", "256k", outputURL.path]
             case .wavLossless:
-                command = "\(ffmpeg) -y -i \"\(inputPath)\" -vn -c:a pcm_s16le \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-vn", "-c:a", "pcm_s16le", outputURL.path]
             case .flacLossless:
-                command = "\(ffmpeg) -y -i \"\(inputPath)\" -vn -c:a flac \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-vn", "-c:a", "flac", outputURL.path]
             }
 
         case .gif:
@@ -266,8 +261,7 @@ final class MediaConverterManager: ObservableObject {
                 fps = "fps=30"
             }
 
-            command =
-                "\(ffmpeg) -y -i \"\(inputPath)\" -vf \"\(fps),\(scale),split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse\" -loop 0 \"\(outputURL.path)\""
+            arguments = ["-y", "-i", inputPath, "-vf", "\(fps),\(scale),split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse", "-loop", "0", outputURL.path]
 
         case .image:
             let preset = ImagePreset(rawValue: task.outputFormat) ?? .webp
@@ -276,15 +270,19 @@ final class MediaConverterManager: ObservableObject {
 
             switch preset {
             case .webp:
-                command = "\(ffmpeg) -y -i \"\(inputPath)\" -c:v libwebp -quality 85 \"\(outputURL.path)\""
+                arguments = ["-y", "-i", inputPath, "-c:v", "libwebp", "-quality", "85", outputURL.path]
             case .png:
-                command = "sips -s format png \"\(inputPath)\" --out \"\(outputURL.path)\""
+                executable = "/usr/bin/sips"
+                arguments = ["-s", "format", "png", inputPath, "--out", outputURL.path]
             case .jpgHigh:
-                command = "sips -s format jpeg -s formatOptions 90 \"\(inputPath)\" --out \"\(outputURL.path)\""
+                executable = "/usr/bin/sips"
+                arguments = ["-s", "format", "jpeg", "-s", "formatOptions", "90", inputPath, "--out", outputURL.path]
             case .jpgSmall:
-                command = "sips -s format jpeg -s formatOptions 70 \"\(inputPath)\" --out \"\(outputURL.path)\""
+                executable = "/usr/bin/sips"
+                arguments = ["-s", "format", "jpeg", "-s", "formatOptions", "70", inputPath, "--out", outputURL.path]
             case .heic:
-                command = "sips -s format heic \"\(inputPath)\" --out \"\(outputURL.path)\""
+                executable = "/usr/bin/sips"
+                arguments = ["-s", "format", "heic", inputPath, "--out", outputURL.path]
             }
         }
 
@@ -295,7 +293,7 @@ final class MediaConverterManager: ObservableObject {
         self.tasks[currentIndex].status = .converting(progress: 0.2, speed: "Converting...")
 
         Task.detached { [weak self] in
-            let (_, exitCode) = Shell.run(command)
+            let exitCode = Shell.run(executable: executable, arguments: arguments)
 
             await MainActor.run { [weak self] in
                 guard let self = self else { return }

@@ -102,12 +102,34 @@ final class IMessageHelper: ObservableObject {
         openPrivacyPane("Privacy_ListenEvent")
     }
 
+    /// The keyboard tap sees every keystroke system-wide, so it only exists while Messages is frontmost.
+    /// `isEventTapActive` stays true while the listener is armed (enabled + permissions) so Settings
+    /// keeps showing "Running" even though the tap itself is installed on demand.
     func updateMonitoring() {
+        guard isEnabled else {
+            stopEventTap()
+            setTapActive(false)
+            errorMessage = nil
+            return
+        }
+
+        guard isMessagesActive else {
+            stopEventTap()
+            setTapActive(isAccessibilityGranted && isInputMonitoringGranted)
+            return
+        }
+
+        if let tap = eventTap, CGEvent.tapIsEnabled(tap: tap) {
+            setTapActive(true)
+            return
+        }
         stopEventTap()
         errorMessage = nil
-
-        guard isEnabled else { return }
         startEventTap()
+    }
+
+    private func setTapActive(_ active: Bool) {
+        if isEventTapActive != active { isEventTapActive = active }
     }
 
     func triggerNext() {
@@ -138,9 +160,7 @@ final class IMessageHelper: ObservableObject {
                 queue: .main
             ) { [weak self] notification in
                 let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-                Task { @MainActor [weak self] in
-                    self?.updateFrontmostApplication(app)
-                }
+                MainActor.assumeIsolated { self?.updateFrontmostApplication(app) }
             })
 
         workspaceObservers.append(
@@ -149,7 +169,7 @@ final class IMessageHelper: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor [weak self] in
+                MainActor.assumeIsolated {
                     self?.updateFrontmostApplication(NSWorkspace.shared.frontmostApplication)
                 }
             })
@@ -158,8 +178,10 @@ final class IMessageHelper: ObservableObject {
     private func updateFrontmostApplication(_ application: NSRunningApplication?) {
         let bundleIdentifier = application?.bundleIdentifier ?? ""
         let active = Self.messagesBundleIdentifiers.contains(bundleIdentifier)
-        isMessagesActive = active
         runtime.update(messagesIsFrontmost: active)
+        guard isMessagesActive != active else { return }
+        isMessagesActive = active
+        updateMonitoring()
     }
 
     private func startEventTap() {
@@ -180,7 +202,7 @@ final class IMessageHelper: ObservableObject {
                 userInfo: observer
             )
         else {
-            isEventTapActive = false
+            setTapActive(false)
             errorMessage = "macOS blocked the keyboard listener. Grant permissions and restart MenuTools."
             return
         }
@@ -190,19 +212,19 @@ final class IMessageHelper: ObservableObject {
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-        isEventTapActive = CGEvent.tapIsEnabled(tap: tap)
+        setTapActive(CGEvent.tapIsEnabled(tap: tap))
     }
 
     private func stopEventTap() {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
         }
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
         eventTap = nil
         runLoopSource = nil
-        isEventTapActive = false
     }
 
     nonisolated private func processEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -249,7 +271,7 @@ final class IMessageHelper: ObservableObject {
             return
         }
         CGEvent.tapEnable(tap: tap, enable: true)
-        isEventTapActive = CGEvent.tapIsEnabled(tap: tap)
+        setTapActive(CGEvent.tapIsEnabled(tap: tap))
         if !isEventTapActive {
             errorMessage = "The keyboard listener was disabled by macOS."
         }

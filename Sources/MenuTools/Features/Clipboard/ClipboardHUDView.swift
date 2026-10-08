@@ -69,7 +69,7 @@ struct ClipboardHUDView: View {
             Divider().opacity(0.35)
 
             // List of clips
-            let items = clipboardManager.filteredItems
+            let items = clipboardManager.visibleItems
             if items.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
@@ -154,21 +154,24 @@ struct ClipboardHUDView: View {
             clipboardManager.clampSelectedIndex()
         }
         .onKeyPress(.upArrow) {
-            let items = clipboardManager.filteredItems
+            clipboardManager.flushFilter()
+            let items = clipboardManager.visibleItems
             if !items.isEmpty {
                 clipboardManager.selectedIndex = (clipboardManager.selectedIndex - 1 + items.count) % items.count
             }
             return .handled
         }
         .onKeyPress(.downArrow) {
-            let items = clipboardManager.filteredItems
+            clipboardManager.flushFilter()
+            let items = clipboardManager.visibleItems
             if !items.isEmpty {
                 clipboardManager.selectedIndex = (clipboardManager.selectedIndex + 1) % items.count
             }
             return .handled
         }
         .onKeyPress(.return) {
-            let items = clipboardManager.filteredItems
+            clipboardManager.flushFilter()
+            let items = clipboardManager.visibleItems
             if clipboardManager.selectedIndex >= 0 && clipboardManager.selectedIndex < items.count {
                 clipboardManager.copyAndPaste(item: items[clipboardManager.selectedIndex])
             }
@@ -183,7 +186,8 @@ struct ClipboardHUDView: View {
             return .handled
         }
         .onKeyPress { press in
-            let items = clipboardManager.filteredItems
+            if !press.modifiers.isEmpty { clipboardManager.flushFilter() }
+            let items = clipboardManager.visibleItems
 
             // ⌘1..9 or ⌥1..9 quick paste
             if press.modifiers == .command || press.modifiers == .option,

@@ -96,6 +96,9 @@ final class FanControlManager: ObservableObject {
     }
 
     private var timerCancellable: AnyCancellable?
+    private var isForegroundPolling = false
+    /// Unrounded sensor reading used by the curve; `currentSensorTemp` is published only on visible change.
+    private var rawSensorTemp: Double = 45.0
     private var lastAppliedRPM: Int = -1
     private let smc = SMCDriver.shared
     private let helper = SMCHelperManager.shared
@@ -104,7 +107,10 @@ final class FanControlManager: ObservableObject {
         loadSavedSettings()
         detectHardware()
         if hasFans && controlMode == .curve {
-            startMonitoring()
+            // Curve control keeps running with the panel closed, at a relaxed cadence.
+            schedulePolling(foreground: false)
+        } else if !hasFans {
+            stopMonitoring()
         }
     }
 
@@ -153,6 +159,7 @@ final class FanControlManager: ObservableObject {
             }
             self.currentRPM = smc.readFanActualRPM(0)
             self.currentSensorTemp = smc.readTemperature(for: selectedSensor)
+            self.rawSensorTemp = self.currentSensorTemp
             updateStatusText()
             return
         }
@@ -175,44 +182,70 @@ final class FanControlManager: ObservableObject {
         }
     }
 
+    /// Panel is open: live readout (2s).
     func startMonitoring() {
-        guard timerCancellable == nil else { return }
         guard hasFans else { return }
-
+        if timerCancellable != nil && isForegroundPolling { return }
         updateFanSpeed()
-        timerCancellable = Timer.publish(every: 1.5, on: .main, in: .common)
+        schedulePolling(foreground: true)
+    }
+
+    func stopMonitoring() {
+        timerCancellable?.cancel()
+        timerCancellable = nil
+        isForegroundPolling = false
+    }
+
+    /// Panel closed: stop polling, except sensor-based control which needs a slow background loop (5s).
+    func enterBackground() {
+        if controlMode == .curve && hasFans {
+            schedulePolling(foreground: false)
+        } else {
+            stopMonitoring()
+        }
+    }
+
+    private func schedulePolling(foreground: Bool) {
+        guard hasFans else { return }
+        if timerCancellable != nil && isForegroundPolling == foreground { return }
+        timerCancellable?.cancel()
+        isForegroundPolling = foreground
+        let interval: TimeInterval = foreground ? 2.0 : 5.0
+        timerCancellable = Timer.publish(every: interval, tolerance: interval * 0.3, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.updateFanSpeed()
             }
     }
 
-    func stopMonitoring() {
-        timerCancellable?.cancel()
-        timerCancellable = nil
-    }
-
     private func updateFanSpeed() {
         guard hasFans else {
-            currentRPM = 0
+            if currentRPM != 0 { currentRPM = 0 }
             return
         }
 
         let actual = smc.readFanActualRPM(0)
-        if actual > 0 {
-            self.currentRPM = actual
+        if actual > 0, currentRPM != actual {
+            currentRPM = actual
         }
 
-        self.currentSensorTemp = smc.readTemperature(for: selectedSensor)
+        rawSensorTemp = smc.readTemperature(for: selectedSensor)
+        if abs(currentSensorTemp - rawSensorTemp) >= 0.5 {
+            currentSensorTemp = rawSensorTemp
+        }
 
         switch controlMode {
         case .auto:
-            statusText = "Auto"
+            setStatus("Auto")
         case .curve:
             updateCurveCalculation(forceApply: false)
         case .constant:
-            statusText = "\(targetRPM) RPM"
+            setStatus("\(targetRPM) RPM")
         }
+    }
+
+    private func setStatus(_ text: String) {
+        if statusText != text { statusText = text }
     }
 
     private func updateCurveCalculation(forceApply: Bool) {
@@ -220,7 +253,7 @@ final class FanControlManager: ObservableObject {
 
         let tMin = Double(curveStartTemp)
         let tMax = Double(max(curveMaxTemp, curveStartTemp + 5))
-        let currentT = currentSensorTemp
+        let currentT = rawSensorTemp
 
         let ratio: Double
         if currentT <= tMin {
@@ -236,8 +269,8 @@ final class FanControlManager: ObservableObject {
         let steppedTarget = (rawTarget / 50) * 50
         let calculatedRPM = min(max(steppedTarget, minRPM), maxRPM)
 
-        self.targetRPM = calculatedRPM
-        self.statusText = "\(Int(currentSensorTemp))°C → \(calculatedRPM) RPM"
+        if targetRPM != calculatedRPM { targetRPM = calculatedRPM }
+        setStatus("\(Int(currentSensorTemp))°C → \(calculatedRPM) RPM")
 
         if forceApply || abs(calculatedRPM - lastAppliedRPM) >= 50 {
             self.lastAppliedRPM = calculatedRPM
@@ -255,14 +288,17 @@ final class FanControlManager: ObservableObject {
         case .auto:
             self.statusText = "Auto"
             self.lastAppliedRPM = -1
+            if !isForegroundPolling { stopMonitoring() }  // nothing to watch while the panel is closed
             sendAutoCommand()
         case .curve:
             self.lastAppliedRPM = -1
-            startMonitoring()
+            // Keep whichever cadence is active; start the slow loop if nothing is polling yet.
+            schedulePolling(foreground: isForegroundPolling)
             updateCurveCalculation(forceApply: true)
         case .constant:
             self.statusText = "\(targetRPM) RPM"
             self.lastAppliedRPM = targetRPM
+            if !isForegroundPolling { stopMonitoring() }
             sendRPMCommand(rpm: targetRPM)
         }
     }

@@ -44,6 +44,9 @@ final class NetworkBypassManager: ObservableObject {
 
     private var pollCancellable: AnyCancellable?
     private var isRefreshing: Bool = false
+    /// Discovered once; `scutil --nc list` is not needed again while the id keeps working.
+    private var cachedVPNUUID: String?
+    private var lastInterfaceLookup: Date?
 
     init() {
         let defaults = UserDefaults.standard
@@ -77,7 +80,7 @@ final class NetworkBypassManager: ObservableObject {
     func startPolling() {
         guard pollCancellable == nil else { return }
         refreshStatus()
-        pollCancellable = Timer.publish(every: 3.0, on: .main, in: .common)
+        pollCancellable = Timer.publish(every: 5.0, tolerance: 1.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in self?.refreshStatus() }
     }
@@ -91,27 +94,73 @@ final class NetworkBypassManager: ObservableObject {
         guard !isVPNTransitioning && !isSpoofTransitioning && !isRefreshing else { return }
         isRefreshing = true
 
+        let knownUUID = cachedVPNUUID
+        // The service name almost never changes; look it up at most every 5 minutes.
+        let needsInterface = lastInterfaceLookup.map { Date().timeIntervalSince($0) > 300 } ?? true
+
         Task.detached(priority: .utility) { [weak self] in
-            let (interfaceOut, _) = Shell.run(
-                "networksetup -listallnetworkservices | grep -v 'An asterisk' | head -n 1")
-            let interface = interfaceOut.trimmingCharacters(in: .whitespacesAndNewlines)
+            var interface = ""
+            if needsInterface {
+                let out = Self.exec("/usr/sbin/networksetup", ["-listallnetworkservices"])
+                interface =
+                    out.split(separator: "\n").first(where: { !$0.contains("An asterisk") })
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            }
 
-            let (listOut, _) = Shell.run("scutil --nc list | grep 'com.vanyavpn.macos.client' | head -n 1")
-            let vpnUUID = Self.extractVPNUUID(from: listOut) ?? "com.vanyavpn.macos.client"
-            let (vpnOut, _) = Shell.run("scutil --nc status \"\(vpnUUID)\" | head -n 1")
-            let vpnIsConnected = vpnOut.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "connected"
+            var vpnUUID = knownUUID
+            if vpnUUID == nil {
+                vpnUUID = Self.lookupVPNUUID()
+            }
+            var vpnIsConnected = false
+            if let uuid = vpnUUID {
+                let statusOut = Self.exec("/usr/sbin/scutil", ["--nc", "status", uuid])
+                vpnIsConnected = Self.firstLine(statusOut).lowercased() == "connected"
+            }
 
-            let (spoofOut, _) = Shell.run("pgrep -x spoofdpi")
-            let spoofIsRunning = !spoofOut.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            // In-process process-table lookup instead of spawning pgrep.
+            let spoofIsRunning = Self.isProcessRunning(named: "spoofdpi")
+            let foundInterface = interface
+            let foundUUID = vpnUUID
+            let connected = vpnIsConnected
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                if !interface.isEmpty { self.activeNetworkInterface = interface }
-                self.isVPNConnected = vpnIsConnected
-                self.isSpoofDPIRunning = spoofIsRunning
+                if needsInterface {
+                    self.lastInterfaceLookup = Date()
+                    if !foundInterface.isEmpty && self.activeNetworkInterface != foundInterface {
+                        self.activeNetworkInterface = foundInterface
+                    }
+                }
+                if self.cachedVPNUUID != foundUUID { self.cachedVPNUUID = foundUUID }
+                if self.isVPNConnected != connected { self.isVPNConnected = connected }
+                if self.isSpoofDPIRunning != spoofIsRunning { self.isSpoofDPIRunning = spoofIsRunning }
                 self.isRefreshing = false
             }
         }
+    }
+
+    // MARK: - Cheap system queries
+
+    nonisolated private static func exec(_ path: String, _ arguments: [String]) -> String {
+        ProcessLookup.output(of: path, arguments)
+    }
+
+    nonisolated private static func firstLine(_ text: String) -> String {
+        text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+    }
+
+    /// Finds the VanyaVPN configuration id in `scutil --nc list`; nil when it is not installed.
+    nonisolated private static func lookupVPNUUID() -> String? {
+        let list = exec("/usr/sbin/scutil", ["--nc", "list"])
+        guard
+            let line = list.split(separator: "\n").first(where: { $0.contains("com.vanyavpn.macos.client") })
+        else { return nil }
+        return extractVPNUUID(from: String(line))
+    }
+
+    nonisolated private static func isProcessRunning(named name: String) -> Bool {
+        ProcessLookup.isRunning(named: name)
     }
 
     nonisolated private static func extractVPNUUID(from output: String) -> String? {
@@ -132,9 +181,9 @@ final class NetworkBypassManager: ObservableObject {
         return nsString.substring(with: match.range)
     }
 
-    private func getVanyaVPNUUID() -> String {
-        let (output, _) = Shell.run("scutil --nc list | grep 'com.vanyavpn.macos.client' | head -n 1")
-        return Self.extractVPNUUID(from: output) ?? "com.vanyavpn.macos.client"
+    /// Uses the cached id when known; otherwise falls back to the bundle id like before.
+    nonisolated private static func resolveVPNUUID(cached: String?) -> String {
+        cached ?? lookupVPNUUID() ?? "com.vanyavpn.macos.client"
     }
 
     // MARK: - VPN Actions
@@ -145,10 +194,10 @@ final class NetworkBypassManager: ObservableObject {
 
     func connectVPN() {
         isVPNTransitioning = true
+        let knownUUID = cachedVPNUUID
 
         Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            let vpnUUID = await self.getVanyaVPNUUID()
+            let vpnUUID = Self.resolveVPNUUID(cached: knownUUID)
 
             Shell.run("scutil --nc start \"\(vpnUUID)\"")
             Shell.run("open -a 'ВПН' 2>/dev/null || open -a 'VanyaVPN' 2>/dev/null")
@@ -178,10 +227,10 @@ final class NetworkBypassManager: ObservableObject {
 
     func disconnectVPN() {
         isVPNTransitioning = true
+        let knownUUID = cachedVPNUUID
 
         Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            let vpnUUID = await self.getVanyaVPNUUID()
+            let vpnUUID = Self.resolveVPNUUID(cached: knownUUID)
 
             Shell.run("scutil --nc stop \"\(vpnUUID)\"")
             Shell.run("osascript -e 'tell application \"VanyaVPN\" to quit' 2>/dev/null")
@@ -234,8 +283,7 @@ final class NetworkBypassManager: ObservableObject {
             )
 
             try? await Task.sleep(nanoseconds: 900_000_000)
-            let (status, _) = Shell.run("pgrep -x spoofdpi")
-            let isRunning = !status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let isRunning = Self.isProcessRunning(named: "spoofdpi")
             let log = isRunning ? "" : Shell.run("tail -n 4 /tmp/menutools_spoofdpi.log").output
 
             await MainActor.run { [weak self] in
