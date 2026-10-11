@@ -88,10 +88,16 @@ enum PreviewRenderer {
             ("battery-gg-percent-80-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
             ("battery-gg-percent-80-light", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: false)),
             ("battery-gg-percent-15-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 15, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
+            ("battery-gg-percent-100-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 100, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
+            ("battery-gg-plain-80-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: false, isLowPowerMode: false, showPercentInside: false, isDarkMode: true)),
+            ("battery-gg-bolt-80-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: true, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
+            ("battery-gg-bigbolt-80-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: true, isLowPowerMode: false, showPercentInside: false, isDarkMode: true)),
+            ("battery-gg-bolt-100-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 100, isCharging: true, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
+            ("battery-gg-bolt-80-light", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: true, isLowPowerMode: false, showPercentInside: true, isDarkMode: false)),
         ]
 
         for (name, img) in testCases {
-            let scale: CGFloat = 3.0
+            let scale: CGFloat = 2.0  // menu bar backing scale; compare 1:1 with system screenshots
             let rep = NSBitmapImageRep(
                 bitmapDataPlanes: nil,
                 pixelsWide: Int(img.size.width * scale),
@@ -109,7 +115,7 @@ enum PreviewRenderer {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             if name.contains("-dark") {
-                NSColor(white: 0.12, alpha: 1.0).setFill()
+                NSColor(white: 0.02, alpha: 1.0).setFill()
                 NSRect(origin: .zero, size: img.size).fill()
             } else {
                 NSColor(white: 0.95, alpha: 1.0).setFill()

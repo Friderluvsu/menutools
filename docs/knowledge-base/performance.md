@@ -6,6 +6,8 @@ Rules summary: `AGENTS.md` → "Performance Rules". This file holds the timer in
 - Use a release build (`make release` or `make run`). Close the panel, wait about 10 s, then sample.
 - CPU: `ps -o %cpu= -p <pid>` or `top -l 3 -s 2 -pid <pid> -stats pid,cpu,mem`.
 - Memory: `vmmap --summary <pid>` and read `Physical footprint` (and `peak`). Use this figure for comparisons. `ps` RSS includes shared framework pages and changes with uptime, so it is only a secondary signal.
+- Panel lifecycle: `build/MenuTools.app/Contents/MacOS/MenuTools --panel-memory-diagnose [seconds]` (quit the running MenuTools first). It prints footprint and CPU time per phase.
+- Object growth: `heap <pid>` twice and diff the class counts. The SwiftUI classes (`PropertyList.Element`, `AnyTrackedValue` dictionaries, `DisplayList.Item`) show whether the view graph grows.
 - Keep the same conditions when comparing: same build configuration, panel state and uptime. A debug bundle (`make build`, `make preview`) is not comparable with a release bundle.
 
 ## Timer and watcher inventory
@@ -61,6 +63,23 @@ Comparison conditions: same Mac (macOS 27.2, arm64), release configuration, sign
 
 RSS and footprint disagree (for example 63.1 MB RSS against 11.6 MB footprint in the controlled comparison). That is expected, because RSS counts shared pages. Compare footprints.
 
+## Panel lifecycle audit (2026-10-10)
+
+Release build, macOS 27.2, arm64.
+
+| Phase | Footprint | CPU time |
+|---|---|---|
+| Launch, panel never opened (10 s idle) | 12.8–13.2 MB | 0.2 s total |
+| Panel monitors ran 4 s, no UI | +3 MB (once +21 MB: first network fetches, not reproduced) | — |
+| After 10 open/close cycles | 33–34 MB | — |
+| Panel open 180 s with live polling | 33–34 MB, flat | 0.06 s for 180 s |
+| Idle, panel closed (60 s, `top`) | — | 0.0%, ~0.1 idle wakeups/s, 3 threads |
+
+- No leak while the panel is open: a `heap` diff across 150 s open went from 107.6k to 106.7k objects.
+- No leak per open/close: 30 cycles moved the footprint by under 1 MB.
+- Releasing the panel after close was tried and dropped. The hosting view deallocated, but the footprint did not fall, even after `malloc_zone_pressure_relief`: freed pages stay dirty in the malloc zone, and Swift type metadata and ObjC method caches (about 2 MB) stay for the life of the process. Rebuilding cost 50–80 ms on the next open.
+- A 27 h instance (installed build of `a796370`) measured 64.8 MB footprint, but only 19.9 MB RSS (most of it compressed) and 195 s CPU in total (about 0.2% average). Its heap held 3–4 times more SwiftUI graph objects than a fresh open (for example 2904 against 780 `AnyTrackedValue` dictionaries). The source was not identified: Settings pages, pickers, the shelf panel and the clipboard HUD build view graphs on demand and keep them. Next step: run `leaks <pid>` and `heap <pid>` on a long-running instance before restarting it.
+
 ## Build and verification record
 
 Reported for the fix round (2026-10-09):
@@ -72,4 +91,5 @@ Reported for the fix round (2026-10-09):
 This resume (2026-10-09): `make release` exited 0. The compiler emitted linker search-path warnings and one Swift `Sendable` warning; the app bundle was signed and produced successfully.
 
 ## Open items
+- Find what grows the SwiftUI graph over a long session (see the 2026-10-10 audit).
 - Repeat the comparison with multiple fresh launches if a smaller-than-1 MB memory change needs to be distinguished from run-to-run variation.

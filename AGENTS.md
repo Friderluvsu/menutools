@@ -69,6 +69,7 @@ Run the bundle binary (`build/MenuTools.app/Contents/MacOS/MenuTools`), never a 
 - `--window-diagnose`: prints `accessibility_trusted` and whether the session event tap can be created. Exits.
 - `--ai-limits-diagnose`: prints per-provider status, windows and cache age, never tokens. It reads the Keychain secret in-process, so run it only when asked.
 - `--show-popover`: opens the panel at launch (manual testing).
+- `--panel-memory-diagnose [seconds]`: prints physical footprint and CPU time at launch, after the panel's monitors, after 10 open/close cycles and while the panel stays open (default 180 s), then quits. Needs no other MenuTools running.
 
 ### Important Runtime & Security Rules
 1. **Designated Requirement**: `com.frider.MenuTools`. `scripts/build.sh` signs the bundle with this requirement. Never execute `.build/debug/MenuTools` directly; TCC permissions (Accessibility, Input Monitoring) are bound to `/Applications/MenuTools.app` or the signed bundle in `build/`.
@@ -93,7 +94,7 @@ Run the bundle binary (`build/MenuTools.app/Contents/MacOS/MenuTools`), never a 
 4. **Theme Visibility & Native Battery Bar Variations**: Menu bar icons adapt to both macOS Dark and Light modes. Appearance comes from `NSApp.effectiveAppearance`, not the status button. `BatteryIconRenderer` provides:
    - `renderChargeOnly(...)`: Standalone battery charge level without '%' in native macOS system font (13pt monospaced digits), featuring dynamic Apple palettes: Charging Green `#30D158` with bolt, Low Power Yellow `#FFD60A`, Low Battery Red `#FF453A`.
    - `renderBar(...)`: Native classic macOS battery bar (22x11.5pt body, 3.5pt radius, 1.5x4.5pt terminal cap, 2pt cavity inset, Apple system color palettes: Low Power Yellow `#FFD60A`, Low Battery Red `#FF453A`, Charging Green `#30D158` with centered bolt, and optional outer percentage text or pure charge number without '%').
-   - `renderGoldenGateBar(...)`: macOS 27 Golden Gate battery, measured from the system item: 23x12pt body, 4pt radius, 1.5x4.5pt terminal, translucent body, charge fill, percentage knocked out of the fill. Canvas 28x18pt. Details: `docs/knowledge-base/battery-icons.md`.
+   - `renderGoldenGateBar(...)`: macOS 27 battery, matched pixel by pixel to a 2x screenshot of the system item: solid 23x12pt body with continuous (squircle) 4pt corners and no outline, charge fill edge to edge with a straight cut, detached 1.5x4pt terminal 1pt to the right, digits (SF Pro 11pt medium, width -0.1) knocked out of the body. On AC power (charging or on hold) a small knocked-out bolt follows the digits; without digits a large outlined bolt is drawn. Canvas 28x18pt. Details: `docs/knowledge-base/battery-icons.md`.
    - `renderRing(...)`: Circular dynamic color battery ring with dark/light contrast adaptation.
    - SF Symbols use `.semibold` weight with `isTemplate = true`. Battery renders are full colour (`isTemplate = false`).
 5. **Concise UI Philosophy**: All labels and text in Settings and Popovers follow "краткость — сестра таланта": short, scannable titles and details without verbose explanatory paragraphs.

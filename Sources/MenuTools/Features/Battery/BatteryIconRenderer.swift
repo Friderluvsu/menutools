@@ -208,9 +208,11 @@ enum BatteryIconRenderer {
         return image
     }
 
-    /// macOS 27 battery: translucent body, white charge fill, percentage knocked out of the fill
-    /// (dark over the charge, light over the empty part). Geometry measured from the system item:
-    /// 23 × 12 pt body, 1.5 × 4.5 pt terminal.
+    /// macOS 27 battery, matched pixel by pixel to the system item (2x screenshot):
+    /// 23 × 12 pt solid body, charge fill edge to edge with a straight cut, no outline,
+    /// detached 1.5 × 4 pt terminal 1 pt to the right. Digits (SF Pro 11 pt medium, slightly condensed,
+    /// 8 pt digit height) are knocked out of the body. `isCharging` (pass "on AC power", as the system does)
+    /// adds a knocked-out bolt after the digits; without digits it draws a large outlined bolt instead.
     static func renderGoldenGateBar(
         percentage: Int,
         isCharging: Bool,
@@ -220,122 +222,163 @@ enum BatteryIconRenderer {
     ) -> NSImage {
         let canvasSize = NSSize(width: 28.0, height: 18.0)
         let image = NSImage(size: canvasSize, flipped: false) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
             let bodyRect = CGRect(x: 1.5, y: 3.0, width: 23.0, height: 12.0)
-            let capRect = CGRect(x: bodyRect.maxX + 0.75, y: bodyRect.midY - 2.25, width: 1.5, height: 4.5)
-            let bodyRadius: CGFloat = 4.0
-            let inset: CGFloat = 1.5
-            let innerRect = bodyRect.insetBy(dx: inset, dy: inset)
+            let capRect = CGRect(x: bodyRect.maxX + 1.0, y: bodyRect.midY - 2.0, width: 1.5, height: 4.0)
+            let bodyPath = continuousRoundedRect(bodyRect, radius: 4.0)
 
             let clampedPct = CGFloat(max(0, min(100, percentage)))
-            let fillWidth = max(percentage > 0 ? 2.0 : 0.0, innerRect.width * (clampedPct / 100.0))
-            let fillRect = CGRect(x: innerRect.minX, y: innerRect.minY, width: fillWidth, height: innerRect.height)
+            let fillRect = CGRect(
+                x: bodyRect.minX, y: bodyRect.minY,
+                width: (bodyRect.width * clampedPct / 100.0 * 2.0).rounded(.down) / 2.0, height: bodyRect.height)
 
-            // Shell: faint rim + translucent empty interior
-            let rimColor = isDarkMode ? NSColor(white: 1.0, alpha: 0.18) : NSColor(white: 0.0, alpha: 0.30)
-            let emptyColor = isDarkMode ? NSColor(white: 1.0, alpha: 0.42) : NSColor(white: 0.0, alpha: 0.22)
-            let bodyPath = NSBezierPath(roundedRect: bodyRect.insetBy(dx: 0.5, dy: 0.5), xRadius: bodyRadius, yRadius: bodyRadius)
-            emptyColor.setFill()
-            bodyPath.fill()
-            bodyPath.lineWidth = 1.0
-            rimColor.setStroke()
-            bodyPath.stroke()
-            let capPath = NSBezierPath(roundedRect: capRect, xRadius: 0.75, yRadius: 0.75)
-            rimColor.setFill()
-            capPath.fill()
-
-            // Charge fill colors (Apple system palette)
+            // System values over a black bar: fill 241, empty 116, terminal 139 (of 255).
+            let emptyColor = isDarkMode ? NSColor(white: 1.0, alpha: 0.45) : NSColor(white: 0.0, alpha: 0.32)
+            let capColor = isDarkMode ? NSColor(white: 1.0, alpha: 0.54) : NSColor(white: 0.0, alpha: 0.38)
             let fillColor: NSColor
-            let inkOnFill: NSColor
             if isLowPowerMode {
                 fillColor = isDarkMode
                     ? NSColor(srgbRed: 1.0, green: 0.839, blue: 0.039, alpha: 1.0)
                     : NSColor(srgbRed: 0.85, green: 0.608, blue: 0.0, alpha: 1.0)
-                inkOnFill = .black
             } else if percentage <= 20 && !isCharging {
                 fillColor = isDarkMode
                     ? NSColor(srgbRed: 1.0, green: 0.271, blue: 0.227, alpha: 1.0)
                     : NSColor(srgbRed: 0.843, green: 0.0, blue: 0.082, alpha: 1.0)
-                inkOnFill = .white
-            } else if isCharging {
-                fillColor = isDarkMode
-                    ? NSColor(srgbRed: 0.188, green: 0.820, blue: 0.345, alpha: 1.0)
-                    : NSColor(srgbRed: 0.141, green: 0.686, blue: 0.282, alpha: 1.0)
-                inkOnFill = .black
             } else {
-                fillColor = isDarkMode ? NSColor(white: 1.0, alpha: 0.95) : NSColor(white: 0.0, alpha: 0.85)
-                inkOnFill = isDarkMode ? .black : .white
-            }
-            let inkOnEmpty: NSColor = isDarkMode ? .white : .black
-
-            if fillWidth > 0 {
-                let fillPath = NSBezierPath(
-                    roundedRect: fillRect,
-                    xRadius: min(2.0, fillWidth / 2.0),
-                    yRadius: min(2.0, fillWidth / 2.0)
-                )
-                fillColor.setFill()
-                fillPath.fill()
+                fillColor = isDarkMode ? NSColor(white: 1.0, alpha: 0.945) : NSColor(white: 0.0, alpha: 0.85)
             }
 
-            // Content: percentage (and bolt when charging), knocked out of the fill
-            let drawContent = { (ink: NSColor) in
-                let font = NSFont.systemFont(ofSize: 9.5, weight: .bold, design: .rounded)
-                let bolt: NSImage? = isCharging
-                    ? NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
-                        .withSymbolConfiguration(
-                            NSImage.SymbolConfiguration(pointSize: 6.5, weight: .bold)
-                                .applying(NSImage.SymbolConfiguration(paletteColors: [ink])))
-                    : nil
+            // Terminal: flat on the left, rounded on the right.
+            let cap = NSBezierPath()
+            let r = capRect.width
+            cap.move(to: CGPoint(x: capRect.minX, y: capRect.minY))
+            cap.line(to: CGPoint(x: capRect.minX, y: capRect.maxY))
+            cap.appendArc(
+                withCenter: CGPoint(x: capRect.minX, y: capRect.maxY - r), radius: r,
+                startAngle: 90, endAngle: 0, clockwise: true)
+            cap.line(to: CGPoint(x: capRect.maxX, y: capRect.minY + r))
+            cap.appendArc(
+                withCenter: CGPoint(x: capRect.minX, y: capRect.minY + r), radius: r,
+                startAngle: 0, endAngle: -90, clockwise: true)
+            cap.close()
+            capColor.setFill()
+            cap.fill()
 
-                var textWidth: CGFloat = 0
-                var textHeight: CGFloat = 0
-                let text = showPercentInside ? "\(percentage)" as NSString : nil
-                let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
-                if let text {
-                    let size = text.size(withAttributes: attrs)
-                    textWidth = size.width
-                    textHeight = size.height
-                }
-                let gap: CGFloat = text != nil && bolt != nil ? 1.0 : 0
-                let boltWidth = bolt?.size.width ?? 0
-                let groupWidth = textWidth + gap + boltWidth
-                var x = bodyRect.midX - groupWidth / 2.0
+            ctx.saveGState()
+            ctx.addPath(bodyPath)
+            ctx.clip()
+            ctx.setFillColor(emptyColor.cgColor)
+            ctx.fill(CGRect(x: fillRect.maxX, y: bodyRect.minY, width: bodyRect.maxX - fillRect.maxX, height: bodyRect.height))
+            ctx.setFillColor(fillColor.cgColor)
+            ctx.fill(fillRect)
+            ctx.restoreGState()
 
-                if let text {
-                    text.draw(
-                        in: CGRect(x: x, y: bodyRect.midY - textHeight / 2.0, width: textWidth, height: textHeight),
-                        withAttributes: attrs)
-                    x += textWidth + gap
-                }
-                if let bolt {
-                    bolt.draw(
-                        in: CGRect(x: x, y: bodyRect.midY - bolt.size.height / 2.0, width: bolt.size.width,
-                            height: bolt.size.height),
-                        from: .zero, operation: .sourceOver, fraction: 1.0)
-                }
+            if showPercentInside {
+                // Knock the digits (and the small bolt on AC) out of the body so the menu bar shows through.
+                ctx.saveGState()
+                ctx.setBlendMode(.destinationOut)
+                drawCenteredDigits("\(percentage)", withBolt: isCharging, in: ctx, bodyRect: bodyRect)
+                ctx.restoreGState()
+            } else if isCharging {
+                drawGoldenGateBolt(in: ctx, bodyRect: bodyRect, color: fillColor)
             }
-
-            if showPercentInside || isCharging {
-                NSGraphicsContext.saveGraphicsState()
-                NSBezierPath(rect: fillRect).addClip()
-                drawContent(inkOnFill)
-                NSGraphicsContext.restoreGraphicsState()
-
-                // Empty part of the body = body minus the fill
-                let emptyClip = NSBezierPath(rect: bodyRect)
-                emptyClip.appendRect(fillRect)
-                emptyClip.windingRule = .evenOdd
-                NSGraphicsContext.saveGraphicsState()
-                emptyClip.addClip()
-                drawContent(inkOnEmpty)
-                NSGraphicsContext.restoreGraphicsState()
-            }
-
             return true
         }
 
         image.isTemplate = false
         return image
+    }
+
+    /// Digits centred on the body by glyph bounds, so the digit height (not the line height) is centred.
+    /// On AC a bolt as tall as the digits follows them, and the pair is centred as a group.
+    private static func drawCenteredDigits(_ text: String, withBolt: Bool, in ctx: CGContext, bodyRect: CGRect) {
+        let gap: CGFloat = withBolt ? 0.75 : 0
+        var fontSize: CGFloat = 11.0
+        var line: CTLine
+        var bounds: CGRect
+        var boltWidth: CGFloat = 0
+        repeat {
+            let font = NSFont.systemFont(ofSize: fontSize, weight: .medium, width: NSFont.Width(rawValue: -0.1))
+            let attributed = NSAttributedString(
+                string: text, attributes: [.font: font, .foregroundColor: NSColor.black])
+            line = CTLineCreateWithAttributedString(attributed)
+            bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+            boltWidth = withBolt ? bounds.height * 0.625 : 0
+            fontSize -= 0.5
+        } while bounds.width + gap + boltWidth > bodyRect.width - 3.0 && fontSize > 6
+
+        let groupMinX = bodyRect.midX - (bounds.width + gap + boltWidth) / 2.0
+        // 0.25 pt above centre, as the system draws them.
+        let glyphMinY = bodyRect.midY - bounds.height / 2.0 + 0.25
+        ctx.textMatrix = .identity
+        ctx.textPosition = CGPoint(x: groupMinX - bounds.minX, y: glyphMinY - bounds.minY)
+        CTLineDraw(line, ctx)
+        if withBolt {
+            // The sharp tips overshoot the digits by 0.5 pt so they read as tall after antialiasing.
+            let box = CGRect(
+                x: groupMinX + bounds.width + gap, y: glyphMinY - 0.5, width: boltWidth, height: bounds.height + 1.0)
+            ctx.addPath(smallBoltPath(in: box))
+            ctx.fillPath()
+        }
+    }
+
+    /// The system's small bolt, traced from a 2x screenshot (5 × 8 pt next to 8 pt digits).
+    private static func smallBoltPath(in box: CGRect) -> CGPath {
+        let points: [(CGFloat, CGFloat)] = [(0.8, 1.0), (0.0, 0.47), (0.5, 0.47), (0.2, 0.0), (1.0, 0.59), (0.5, 0.59)]
+        let path = CGMutablePath()
+        path.addLines(between: points.map { CGPoint(x: box.minX + $0.0 * box.width, y: box.minY + $0.1 * box.height) })
+        path.closeSubpath()
+        return path
+    }
+
+    /// Bolt over the body: 1 pt outline knocked out, filled with the charge colour, overhanging the body.
+    private static func drawGoldenGateBolt(in ctx: CGContext, bodyRect: CGRect, color: NSColor) {
+        guard
+            let symbol = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(
+                    NSImage.SymbolConfiguration(pointSize: boltPointSize, weight: .regular)
+                        .applying(NSImage.SymbolConfiguration(paletteColors: [color])))
+        else { return }
+        let size = symbol.size
+        let rect = CGRect(
+            x: bodyRect.midX - size.width / 2.0, y: bodyRect.midY - size.height / 2.0 + 0.5,
+            width: size.width, height: size.height)
+        let steps = 16
+        for i in 0..<steps {
+            let angle = CGFloat(i) / CGFloat(steps) * 2.0 * .pi
+            symbol.draw(
+                in: rect.offsetBy(dx: cos(angle), dy: sin(angle)),
+                from: .zero, operation: .destinationOut, fraction: 1.0)
+        }
+        symbol.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+    }
+
+    private static let boltPointSize: CGFloat = 12.5
+
+    /// Apple's continuous ("squircle") corner, as drawn by `UIBezierPath(roundedRect:cornerRadius:)`.
+    /// The corner spans 1.52866 × radius per side; the radius is clamped so two corners fit the short side.
+    private static func continuousRoundedRect(_ rect: CGRect, radius: CGFloat) -> CGPath {
+        let r = min(radius, min(rect.width, rect.height) / 2.0 / 1.52866483)
+        let path = CGMutablePath()
+        // One corner in a local frame where the corner sits at the origin and the edges run along +x and +y.
+        func corner(_ origin: CGPoint, _ ux: CGVector, _ uy: CGVector) {
+            func p(_ a: CGFloat, _ b: CGFloat) -> CGPoint {
+                CGPoint(x: origin.x + ux.dx * a * r + uy.dx * b * r, y: origin.y + ux.dy * a * r + uy.dy * b * r)
+            }
+            path.addLine(to: p(1.52866483, 0))
+            path.addCurve(to: p(0.66993427, 0.06549600), control1: p(1.08849323, 0), control2: p(0.86840689, 0))
+            path.addCurve(
+                to: p(0.06549600, 0.66993427), control1: p(0.37282392, 0.16905899),
+                control2: p(0.16905899, 0.37282392))
+            path.addCurve(to: p(0, 1.52866483), control1: p(0, 0.86840689), control2: p(0, 1.08849323))
+        }
+        path.move(to: CGPoint(x: rect.minX + 1.52866483 * r, y: rect.maxY))
+        corner(CGPoint(x: rect.maxX, y: rect.maxY), CGVector(dx: -1, dy: 0), CGVector(dx: 0, dy: -1))
+        corner(CGPoint(x: rect.maxX, y: rect.minY), CGVector(dx: 0, dy: 1), CGVector(dx: -1, dy: 0))
+        corner(CGPoint(x: rect.minX, y: rect.minY), CGVector(dx: 1, dy: 0), CGVector(dx: 0, dy: 1))
+        corner(CGPoint(x: rect.minX, y: rect.maxY), CGVector(dx: 0, dy: -1), CGVector(dx: 1, dy: 0))
+        path.closeSubpath()
+        return path
     }
 
     static func renderRing(

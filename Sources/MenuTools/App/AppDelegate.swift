@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentIconStyle: MenuBarIconStyle?
     private var lastBatteryPercentage: Int = -1
     private var lastBatteryCharging: Bool = false
+    private var lastBatteryPluggedIn: Bool = false
     private var lastBatteryLowPower: Bool = false
     private var lastDarkMode: Bool?
     private var isMouseDownOnButton: Bool = false
@@ -117,7 +118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Automatically reset buggy Google Drive FinderSync extension on startup
         self.appState.systemUtils.autoResetGoogleDriveHelper()
 
-        if CommandLine.arguments.contains("--show-popover") {
+        if CommandLine.arguments.contains("--panel-memory-diagnose") {
+            PanelMemoryDiagnose.run(delegate: self)
+        } else if CommandLine.arguments.contains("--show-popover") {
             DispatchQueue.main.async { [weak self] in
                 self?.showPanel()
             }
@@ -317,6 +320,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showPanel(activate: false)
     }
 
+    var appStateForDiagnose: AppState? { appState }
+
     func hidePanel() {
         guard let panel = panel, isPanelOpen || panel.isVisible else { return }
         // Teardown runs even if the window is already gone, so monitors and polling never outlive the panel.
@@ -426,6 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if style.isBatteryStyle {
             let pct = state.battery.percentage
             let charging = state.battery.isCharging
+            let pluggedIn = state.battery.isPluggedIn
             let lowPower = state.battery.isLowPowerMode
             let hasBattery = state.battery.hasBattery
             // The menu bar follows the system appearance; the status button itself can report .aqua over a dark bar.
@@ -434,23 +440,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if currentIconStyle != style
                 || lastBatteryPercentage != pct
                 || lastBatteryCharging != charging
+                || lastBatteryPluggedIn != pluggedIn
                 || lastBatteryLowPower != lowPower
                 || lastDarkMode != isDarkMode
             {
                 let image: NSImage
                 switch style {
                 case .batteryBarGoldenGate:
+                    // macOS 27 shows the bolt whenever AC is attached, even when charging is on hold.
                     image = BatteryIconRenderer.renderGoldenGateBar(
                         percentage: pct,
-                        isCharging: charging,
+                        isCharging: charging || pluggedIn,
                         isLowPowerMode: lowPower,
                         showPercentInside: false,
                         isDarkMode: isDarkMode
                     )
                 case .batteryBarGoldenGatePercent:
+                    // macOS 27 shows the bolt whenever AC is attached, even when charging is on hold.
                     image = BatteryIconRenderer.renderGoldenGateBar(
                         percentage: pct,
-                        isCharging: charging,
+                        isCharging: charging || pluggedIn,
                         isLowPowerMode: lowPower,
                         showPercentInside: true,
                         isDarkMode: isDarkMode
@@ -521,6 +530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 currentIconStyle = style
                 lastBatteryPercentage = pct
                 lastBatteryCharging = charging
+                lastBatteryPluggedIn = pluggedIn
                 lastBatteryLowPower = lowPower
                 lastDarkMode = isDarkMode
             }

@@ -13,33 +13,38 @@ Battery icons are full colour (`isTemplate = false`). Every renderer takes `isDa
 
 ## Golden Gate (macOS 27 style), `renderGoldenGateBar`
 
-The code comment says the geometry was measured from the system item: a 23 × 12 pt body and a 1.5 × 4.5 pt terminal.
+Matched pixel by pixel against a 2x screenshot of the system battery item (dark menu bar, 80%). At 2x the rendered body, terminal, digits and bolt land on the same pixel columns and rows as the system item.
 
 | Element | Value |
 |---|---|
 | Canvas | 28 × 18 pt |
-| Body rect | origin (1.5, 3.0), 23 × 12 pt |
-| Body corner radius | 4.0 pt |
-| Body outline | `insetBy(0.5)`, 1.0 pt stroke |
-| Terminal cap | 1.5 × 4.5 pt at `bodyRect.maxX + 0.75`, vertically centred, 0.75 pt radius |
-| Charge area | body inset by 1.5 pt |
-| Fill width | `innerWidth × pct / 100`, minimum 2 pt when pct > 0 |
-| Fill corner radius | `min(2, fillWidth / 2)` |
+| Body rect | origin (1.5, 3.0), 23 × 12 pt, no outline |
+| Body corners | continuous (squircle) radius 4 pt, clamped to fit the 12 pt height (`continuousRoundedRect`) |
+| Charge fill | edge to edge from the left, straight right edge, width `23 × pct / 100` floored to 0.5 pt, clipped to the body |
+| Terminal | 1.5 × 4 pt, 1 pt gap after the body, flat left side, rounded right side |
 
-Colours:
+Colours (dark / light). Measured over a black bar: fill 241, empty 116, terminal 139 (of 255).
 
-| State | Fill (dark / light) | Ink on fill |
+| Part | Dark | Light |
 |---|---|---|
-| Low Power Mode | `#FFD60A` / `(0.85, 0.608, 0)` | black |
-| ≤ 20% and not charging | `#FF453A` / `(0.843, 0, 0.082)` | white |
-| Charging | `#30D158` / `(0.141, 0.686, 0.282)` | black |
-| Normal | white 95% / black 85% | black (dark), white (light) |
+| Charge fill | white 94.5% | black 85% |
+| Empty part | white 45% | black 32% |
+| Terminal | white 54% | black 38% |
+| Low Power Mode fill | `#FFD60A` | `(0.85, 0.608, 0)` |
+| ≤ 20% and not on AC | `#FF453A` | `(0.843, 0, 0.082)` |
 
-Empty body: white 42% (dark) or black 22% (light). Rim: white 18% (dark) or black 30% (light). Ink on the empty part: white (dark) or black (light).
+The empty colour is drawn only right of the fill; the translucent fill must not stack on it.
 
-Digits and bolt: the percentage (`showPercentInside`) is drawn in `systemFont(9.5, .bold, .rounded)`. A `bolt.fill` symbol (6.5 pt, bold) appears while charging, with a 1 pt gap before the number. The group is centred on the body. The content is drawn twice: clipped to the fill with the on-fill ink, then clipped to "body minus fill" (even-odd) with the on-empty ink. This is what makes the digits look knocked out of the charge.
+Digits: SF Pro 11 pt, medium, width `NSFont.Width(rawValue: -0.1)` (between standard and condensed; this matches the system digit width of 5.5 pt and height of 8 pt). Weights between medium and semibold do not interpolate; medium is the closer match. The digits are centred on the body by glyph bounds, 0.25 pt above centre, and drawn with `.destinationOut`, so the menu bar shows through. The font shrinks in 0.5 pt steps until the group fits the body minus 3 pt ("100").
 
-Without the percentage and without charging, only the body, fill and cap are drawn.
+AC power: `AppDelegate` passes `isCharging || isPluggedIn`, because the system shows the bolt even when charging is on hold (for example at an 80% limit).
+- With digits (steady state of the system item): a small knocked-out bolt follows the digits 0.75 pt apart, and the pair is centred on the body. The bolt is a 6-point polygon traced from the system item (`smallBoltPath`), 0.625 × digit height wide, overshooting the digits by 0.5 pt at both tips.
+- Without digits: the `bolt.fill` symbol at 12.5 pt regular, centred 0.5 pt above the body centre and overhanging it by about 1 pt. Its 1 pt outline is knocked out (`destinationOut` at 16 offsets on a 1 pt circle), then it is filled with the charge colour. The system also shows this large bolt for a moment right after the charger is plugged in.
+- There is no green charging fill.
+
+Match quality (mean absolute difference of 8-bit grey over the 46 × 24 px body): 12.8 against the system item at 80% on battery, 13.2 live in the menu bar next to the system item. The remainder is antialiasing on the digits.
+
+`.batteryBarGoldenGate` draws the same icon without digits.
 
 ## Native bar, `renderBar`
 - Canvas 27 × 18 pt, or wider when text is drawn.
@@ -56,5 +61,5 @@ Without the percentage and without charging, only the body, fill and cap are dra
 - Charging shows a 7 × 9 pt bolt at the centre. The optional number is monospaced digits, 6.5 pt, bold.
 
 ## Verifying
-- `build/MenuTools.app/Contents/MacOS/MenuTools --render-battery-icons <dir>` writes the styles as PNGs (for example `battery-charge-85-dark`).
+- `build/MenuTools.app/Contents/MacOS/MenuTools --render-battery-icons <dir>` writes the styles as PNGs at 2x (the menu bar scale) over a near-black or light background, for example `battery-gg-percent-80-dark` and `battery-gg-bolt-80-dark`. Compare them 1:1 with a screenshot of the system item.
 - In the running app, change the style in Settings and compare with the system battery item in both appearances.
