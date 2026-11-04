@@ -1,0 +1,121 @@
+Resources/cursor-usage-hook.js
+  s_311feb773960fd::t_5ded9f909ce5f2 1-21
+AGENTS.md
+  s_311feb773960fd::t_488b4d9d579ccb 4,19-23,41,71,74,109,113,148-170,172-174,179,184-188
+Package.swift
+  s_311feb773960fd::t_9163292595cef7 18-21
+Sources/MenuTools/App/AppDelegate.swift
+  s_311feb773960fd::t_2702fc199d5d90 86-92,107-109,113-115,122-125,188-195,265-277,285-287,312-313,317,461-531,542-552,635,642,645-647,652,654-675,677-682,695-697
+Sources/MenuTools/App/AppState.swift
+  s_311feb773960fd::t_8b061541a4e7bd 109-133,161-164,171-174,188-190,192-194,222-228,231-233,263-316,340-345,352-355
+Sources/MenuTools/App/PreviewRenderer.swift
+  s_311feb773960fd::t_715f2608f1809a 7-8,11-18,41-42,44,91-180
+Sources/MenuTools/Features/AILimits/AILimitsManager.swift
+  s_311feb773960fd::t_f4f5b931e39874 5-6,65,218,243-248
+Sources/MenuTools/Features/AILimits/AILimitsModels.swift
+  s_311feb773960fd::t_2728971a21a2c4 7,16,25,34,44,48-49
+Sources/MenuTools/Features/AILimits/AIUsageFetchers.swift
+  s_311feb773960fd::t_f9db120898c921 6,10-11,54-71,78-79,119,121-122,162,191-194,198-240,954-1063,1069-1071,1078,1098-1099,1108-1112
+Sources/MenuTools/Features/AntigravitySessions/AntigravitySession.swift
+  s_311feb773960fd::t_b8c85633be5b59 1-250
+Sources/MenuTools/Features/AntigravitySessions/AntigravitySessionsManager.swift
+  s_311feb773960fd::t_65a6458af7bcc2 1-263
+Sources/MenuTools/Features/Battery/BatteryManager.swift
+  s_311feb773960fd::t_c5b85e7fec5d6a 3,14-23,50,82-83,88,91-168,174-181
+Sources/MenuTools/Features/ClaudeSessions/ClaudeSession.swift
+  s_311feb773960fd::t_1df7b2facab3c4 1-225
+Sources/MenuTools/Features/ClaudeSessions/ClaudeSessionsManager.swift
+  s_311feb773960fd::t_a326b39c3195b4 1-161
+Sources/MenuTools/Features/CodexSessions/CodexSession.swift
+  s_311feb773960fd::t_c6ed662cf71a4d 1-166
+Sources/MenuTools/Features/CodexSessions/CodexSessionsManager.swift
+  s_311feb773960fd::t_afc25ed885fc28 1-186
+Sources/MenuTools/Features/CursorSessions/AppWindowFocus.swift
+  s_311feb773960fd::t_09b0796cca4ed2 1-103
+Sources/MenuTools/Features/CursorSessions/CursorSession.swift
+  s_311feb773960fd::t_c73d5ea90cb39c 1-303
+Sources/MenuTools/Features/CursorSessions/CursorSessionsManager.swift
+  s_311feb773960fd::t_576df287fe8dcc 1-258
+Sources/MenuTools/Features/CursorSessions/CursorWindowFocus.swift
+  s_311feb773960fd::t_d79bf46dcf7c0d 1-8
+Sources/MenuTools/Features/FanControl/SMCDriver.swift
+  s_311feb773960fd::t_f77c613d0baa76 295-305
+Sources/MenuTools/Features/SystemMonitor/GPUSampler.swift
+  s_311feb773960fd::t_a0379e4e0e0153 1-193
+Sources/MenuTools/Features/SystemMonitor/ProcessLookup.swift
+  s_311feb773960fd::t_15214433a4c07b 40-116
+Sources/MenuTools/Features/SystemMonitor/SystemMonitorManager.swift
+  s_311feb773960fd::t_6299e839d0301d 3,14-20,24-28,37-46,59-60,76-83,85-173,177-179,197-202,207-209,231-233,242-245,266-273,311-323,326-329,331-349,355-417,508-576,592-607
+Sources/MenuTools/Features/SystemMonitor/SystemStatDetails.swift
+  s_311feb773960fd::t_c215d1ca0d10c1 1-621
+Sources/MenuTools/Views/Components/AILimitsCard.swift
+  s_311feb773960fd::t_ac38b73af587db 58,72,170,173-177,180,182-186
+Sources/MenuTools/Views/Components/AgentSessionRows.swift
+  s_311feb773960fd::t_65d44b7423149a 1-541
+Sources/MenuTools/Views/Components/AntigravitySessionsCard.swift
+  s_311feb773960fd::t_d165894e1ebba1 1-67
+Sources/MenuTools/Views/Components/ClaudeSessionsCard.swift
+  s_311feb773960fd::t_f2a796dda4472b 1-44
+Sources/MenuTools/Views/Components/CodexSessionsCard.swift
+  s_311feb773960fd::t_614677269c410b 1-67
+Sources/MenuTools/Views/Components/CursorSessionsCard.swift
+  s_311feb773960fd::t_990141a63f3175 1-70
+Sources/MenuTools/Views/Components/FanControlPickerView.swift
+  s_311feb773960fd::t_776c3c59b0e203 7-13,18-26,70,91-92,139,160,177,200,217,293
+Sources/MenuTools/Views/Components/MacToolsTheme.swift
+  s_311feb773960fd::t_2eecaef4ff72a5 138,146-150
+Sources/MenuTools/Views/Components/SessionCardHeader.swift
+  s_311feb773960fd::t_c49f4fc60f245f 1-145
+Sources/MenuTools/Views/Components/SessionsDashboardSection.swift
+  s_311feb773960fd::t_f3312eddb77104 1-385
+Sources/MenuTools/Views/Components/ShelfCard.swift
+  s_311feb773960fd::t_6dcbe8fed155bb 85,100
+Sources/MenuTools/Views/Components/StatDetailPage.swift
+  s_311feb773960fd::t_8cbb12eaa79186 1-979
+Sources/MenuTools/Views/PopoverContentView.swift
+  s_311feb773960fd::t_058ee94510ce06 13-19,21-31,36-37,39,44,46-54,64-66,68-70,73,75,105-367,388-392,402,407-413,415,417-422,427-433,452,464-465,474,478-484,506,513-517,519-520,523-526,529-532,534,543-580,595-612,663,667,669,672,676-677,682,715,762,899,981,1102,1131,1227,1260,1278
+Sources/MenuTools/Views/Tabs/SettingsTabView.swift
+  s_311feb773960fd::t_dae1377e213f79 14-21,25-27,40-109,126-132
+Sources/MenuTools/main.swift
+  s_311feb773960fd::t_8802ccb94265e8 8,11-22,27,29-31,47-51
+docs/knowledge-base/README.md
+  s_311feb773960fd::t_0a1ec1ae68d2a4 7-11,17
+docs/knowledge-base/ai-limits.md
+  s_311feb773960fd::t_b9a0a6760eabd2 5,14,34-36,38-40,77-88,128-130,136
+docs/knowledge-base/antigravity-sessions.md
+  s_311feb773960fd::t_1e28f71c9d1072 1-64
+docs/knowledge-base/claude-sessions.md
+  s_311feb773960fd::t_3a58b6d180a59b 1-41
+docs/knowledge-base/codex-sessions.md
+  s_311feb773960fd::t_9c9b275c80f9bd 1-54
+docs/knowledge-base/cursor-sessions.md
+  s_311feb773960fd::t_2c0e077f84ca46 1-65
+docs/knowledge-base/panel-and-drag.md
+  s_311feb773960fd::t_b81b76c356a923 48,51
+docs/knowledge-base/performance.md
+  s_311feb773960fd::t_7cd5f1b269188a 20-24,42
+docs/knowledge-base/system-stats.md
+  s_311feb773960fd::t_702639ce221d9b 1-39
+docs/knowledge-base/troubleshooting.md
+  s_311feb773960fd::t_e6b36305711eda 32-34,53-61,73-75,106-116
+scripts/install.sh
+  s_311feb773960fd::t_0b3bd57d00d54b 13,15-22
+scripts/run.sh
+  s_311feb773960fd::t_515a423568578a 12-13,15-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "2be323904e38a3ad68e7edd762734b8dfa0740bf",
+  "prompts": {},
+  "sessions": {
+    "s_311feb773960fd": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "146335ef-fac4-4383-a524-45060c2f9af1",
+        "model": "grok-4.7"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    }
+  }
+}
