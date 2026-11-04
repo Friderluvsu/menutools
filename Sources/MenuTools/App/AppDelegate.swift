@@ -53,6 +53,27 @@ private final class ZeroBlinkStatusBarButton: NSStatusBarButton {
 /// First click on the inactive panel (e.g. right after a Finder drop) acts immediately instead of only activating.
 private final class PanelHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func layout() {
+        super.layout()
+        silenceFocusRings(in: self)
+    }
+
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        silenceFocusRings(in: subview)
+    }
+
+    /// Clicks must not draw the accent ring. SwiftUI menus still become key and paint it otherwise.
+    private func silenceFocusRings(in view: NSView) {
+        if view.focusRingType != .none { view.focusRingType = .none }
+        if let cell = (view as? NSControl)?.cell, cell.focusRingType != .none {
+            cell.focusRingType = .none
+        }
+        for subview in view.subviews {
+            silenceFocusRings(in: subview)
+        }
+    }
 }
 
 private final class MenuToolsPanel: NSPanel {
@@ -476,11 +497,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard lastRingInput != marks.needsInput || lastRingRunning != marks.running || lastRingEnded != marks.endedUnseen
             || lastRingDark != darkForCache
         else { return }
-        button.image = Self.sessionRing(
+        let image = Self.sessionRing(
             needsInput: marks.needsInput, running: marks.running, ended: marks.endedUnseen, isDark: isDark)
-        // A same-sized image can stay dirty in the menu bar until this app activates (the panel opening).
+        // Same-sized status images can stay dirty until this app activates. Bounce through nil and
+        // give the bitmap a unique name so AppKit cannot reuse the previous cached composition.
+        button.image = nil
+        button.image = image
         button.needsDisplay = true
-        button.display()
+        button.displayIfNeeded()
         lastRingInput = marks.needsInput
         lastRingRunning = marks.running
         lastRingEnded = marks.endedUnseen
@@ -523,6 +547,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         image.unlockFocus()
         image.isTemplate = quiet
+        // Unique name so NSStatusItem cannot keep showing a stale same-sized bitmap while inactive.
+        _ = image.setName(
+            NSImage.Name(
+                "mt.ring.\(needsInput ? 1 : 0)\(running ? 1 : 0)\(ended ? 1 : 0)\(isDark ? 1 : 0)."
+                    + UUID().uuidString))
         image.accessibilityDescription = "MenuTools"
         return image
     }

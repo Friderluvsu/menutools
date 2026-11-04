@@ -91,6 +91,12 @@ final class CursorSessionsManager: ObservableObject {
     private func refresh() {
         defer { NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil) }
         let scan = CursorSessionFiles.scan()
+        // A busy lock on Cursor's multi-GB DB used to return empty live rows and blank the ring until
+        // the panel opened (immediate refresh). Keep the last good list instead.
+        if scan.readFailed {
+            reschedule()
+            return
+        }
         if scan.live != sessions { sessions = scan.live }
         // Cursor quitting is not a chat finishing. Leave the tracked runs in place until the headers say so.
         guard scan.cursorRunning else {

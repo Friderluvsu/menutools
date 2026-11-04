@@ -923,6 +923,7 @@ private struct ConverterCard: View {
                 .font(.system(size: 10, weight: .medium))
         }
         .menuStyle(.borderlessButton)
+        .suppressesFocusRing()
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 7)
         .frame(minHeight: 26, maxHeight: 26)
@@ -943,6 +944,7 @@ private struct ConverterCard: View {
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .suppressesFocusRing()
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Queue")

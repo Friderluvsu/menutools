@@ -9,6 +9,8 @@ enum SessionDashboardLayout {
     static let detailAnimation = Animation.smooth(duration: 0.3, extraBounce: 0)
     /// Filter bar, including its 2pt inset. The list scrolls in the room left under it.
     static let filterBarHeight: CGFloat = 28
+    /// Room left of the vertical scroller so it does not sit on the row controls.
+    static let scrollerGutter: CGFloat = 16
 
     /// Header 34, divider 1, page padding, filter bar, and the gap before the list.
     /// Matches `PanelHeader` and the padding around `SessionsPage`.
@@ -76,7 +78,8 @@ struct DashboardSessionsSection: View {
         if counts.total == 0 {
             EmptyView()
         } else if counts.total > SessionDashboardLayout.maxInlineRows {
-            SessionsSummaryCard(counts: counts, tally: tally, openSessions: openSessions)
+            SessionsSummaryCard(
+                counts: counts, tally: tally, border: borderMix, openSessions: openSessions)
         } else {
             VStack(spacing: MacToolsTheme.sectionSpacing) {
                 if counts.claude > 0 {
@@ -108,6 +111,19 @@ struct DashboardSessionsSection: View {
             + .cursor(cursor.sessions, ended: cursor.ended.count)
             + .codex(live: codex.sessions.count, ended: codex.ended.count)
             + .antigravity(antigravity.sessions, ended: antigravity.ended.count)
+    }
+
+    /// One light per waiting or running session, and one per ended row still highlighted blue.
+    /// Checked ended rows stay in the tally and off the border.
+    private var borderMix: SessionBorderMix {
+        SessionBorderMix(input: tally.input, running: tally.running, ended: uncheckedEnded)
+    }
+
+    /// Same rows the list paints blue: not yet seen, or still fresh from this visit.
+    private var uncheckedEnded: Int {
+        cursor.ended.filter { !$0.seen || cursor.freshEnded.contains($0.id) }.count
+            + codex.ended.filter { !$0.seen || codex.freshEnded.contains($0.id) }.count
+            + antigravity.ended.filter { !$0.seen || antigravity.freshEnded.contains($0.id) }.count
     }
 }
 
@@ -234,6 +250,7 @@ struct SessionsPage: View {
             }
         }
         .padding(.vertical, 1)
+        .padding(.trailing, needsScroll ? SessionDashboardLayout.scrollerGutter : 0)
     }
 
     private var filters: [SessionProviderFilter] {
@@ -351,6 +368,7 @@ private struct SessionDashboardCounts {
 private struct SessionsSummaryCard: View {
     let counts: SessionDashboardCounts
     let tally: SessionStatusTally
+    let border: SessionBorderMix
     let openSessions: () -> Void
 
     var body: some View {
@@ -375,11 +393,181 @@ private struct SessionsSummaryCard: View {
                         .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
                 }
             }
+            .overlay {
+                if !border.isQuiet {
+                    TravelingNeonBorder(mix: border, cornerRadius: MacToolsTheme.cornerRadius)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .suppressesFocusRing()
         .hoverHighlight(cornerRadius: MacToolsTheme.cornerRadius)
         .help(tally.spoken.isEmpty ? "Show all sessions" : "Show all sessions. \(tally.spoken)")
+    }
+}
+
+/// Waiting, running, and unchecked-ended counts for the summary border. Idle and checked ended rows are left out.
+private struct SessionBorderMix: Equatable {
+    var input: Int
+    var running: Int
+    var ended: Int
+
+    var isQuiet: Bool { input + running + ended == 0 }
+
+    /// Orange, then green, then blue, so the three colours stay in one order.
+    fileprivate var bands: [(color: NeonRGBA, count: Int)] {
+        [
+            (NeonRGBA(r: 1.0, g: 0.624, b: 0.039, a: 1), input),
+            (NeonRGBA(r: 0.188, g: 0.820, b: 0.345, a: 1), running),
+            (NeonRGBA(r: 0.039, g: 0.518, b: 1.0, a: 1), ended),
+        ].filter { $0.count > 0 }
+    }
+}
+
+/// Proportional stroke plus one traveling light per session. The whole pattern turns together,
+/// so each light stays inside its own colour.
+private struct TravelingNeonBorder: View {
+    var mix: SessionBorderMix
+    var cornerRadius: CGFloat
+    @State private var spin = false
+
+    var body: some View {
+        let turns = spin ? 360.0 : 0
+        ZStack {
+            PerimeterFill(stops: baseStops, cornerRadius: cornerRadius, lineWidth: 1.35, degrees: turns)
+            PerimeterFill(stops: sparkStops, cornerRadius: cornerRadius, lineWidth: 1.8, degrees: turns)
+                .blur(radius: 2.2)
+                .opacity(0.55)
+            PerimeterFill(stops: sparkStops, cornerRadius: cornerRadius, lineWidth: 1.35, degrees: turns)
+        }
+        .allowsHitTesting(false)
+        .onAppear {
+            withAnimation(.linear(duration: 3.2).repeatForever(autoreverses: false)) {
+                spin = true
+            }
+        }
+    }
+
+    /// Each colour holds its share of the loop, and neighbouring colours blend across a short seam.
+    private var baseStops: [Gradient.Stop] {
+        let bands = mix.bands
+        let total = Double(bands.reduce(0) { $0 + $1.count })
+        guard total > 0 else { return [] }
+        let shares = bands.map { Double($0.count) / total }
+        let seam = bands.count < 2 ? 0 : min(0.06, (shares.min() ?? 1) * 0.35)
+        var raw: [NeonStop] = []
+        var cursor = 0.0
+        for (band, share) in zip(bands, shares) {
+            let half = seam == 0 ? 0 : min(seam, share * 0.35) / 2
+            let tint = band.color.opacity(0.46)
+            raw.append(NeonStop(location: cursor + half, color: tint))
+            raw.append(NeonStop(location: cursor + share - half, color: tint))
+            cursor += share
+        }
+        return NeonStop.closed(raw)
+    }
+
+    /// One hot spot per session, centered in that session's slice of its colour.
+    private var sparkStops: [Gradient.Stop] {
+        let bands = mix.bands
+        let total = Double(bands.reduce(0) { $0 + $1.count })
+        guard total > 0 else { return [] }
+        var raw: [NeonStop] = []
+        var cursor = 0.0
+        for band in bands {
+            let share = Double(band.count) / total
+            let slot = share / Double(band.count)
+            let width = min(0.10, slot * 0.40)
+            for index in 0..<band.count {
+                let center = cursor + (Double(index) + 0.5) * slot
+                raw.append(NeonStop(location: center - width, color: .clear))
+                raw.append(NeonStop(location: center - width * 0.42, color: band.color.opacity(0.75)))
+                raw.append(NeonStop(location: center, color: .hot))
+                raw.append(NeonStop(location: center + width * 0.42, color: band.color.opacity(0.75)))
+                raw.append(NeonStop(location: center + width, color: .clear))
+            }
+            cursor += share
+        }
+        return NeonStop.closed(raw)
+    }
+}
+
+/// Angular gradient masked down to the card's stroke, then turned so the pattern travels.
+private struct PerimeterFill: View {
+    var stops: [Gradient.Stop]
+    var cornerRadius: CGFloat
+    var lineWidth: CGFloat
+    var degrees: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            let span = max(geo.size.width, geo.size.height) * 1.6
+            Circle()
+                .fill(AngularGradient(stops: stops, center: .center))
+                .frame(width: span, height: span)
+                .rotationEffect(.degrees(degrees))
+                .position(x: geo.size.width / 2, y: geo.size.height / 2)
+        }
+        .mask {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(lineWidth: lineWidth)
+        }
+    }
+}
+
+private struct NeonRGBA {
+    var r, g, b, a: Double
+
+    static let clear = NeonRGBA(r: 0, g: 0, b: 0, a: 0)
+    static let hot = NeonRGBA(r: 1, g: 1, b: 1, a: 0.55)
+
+    var color: Color { Color(.sRGB, red: r, green: g, blue: b, opacity: a) }
+
+    func opacity(_ value: Double) -> NeonRGBA {
+        NeonRGBA(r: r, g: g, b: b, a: a * value)
+    }
+
+    func mixed(toward other: NeonRGBA, amount t: Double) -> NeonRGBA {
+        NeonRGBA(
+            r: r + (other.r - r) * t,
+            g: g + (other.g - g) * t,
+            b: b + (other.b - b) * t,
+            a: a + (other.a - a) * t)
+    }
+}
+
+private struct NeonStop {
+    var location: Double
+    var color: NeonRGBA
+
+    /// Sorts stops onto the loop and makes the colour at 0 match the colour at 1.
+    static func closed(_ raw: [NeonStop]) -> [Gradient.Stop] {
+        let wrapped = raw.map { stop in
+            var location = stop.location.truncatingRemainder(dividingBy: 1)
+            if location < 0 { location += 1 }
+            return NeonStop(location: location, color: stop.color)
+        }
+        let sorted = wrapped.sorted { $0.location < $1.location }
+        var merged: [NeonStop] = []
+        for stop in sorted {
+            if let last = merged.last, stop.location <= last.location + 0.0008 {
+                merged[merged.count - 1] = stop.color.a >= last.color.a ? stop : last
+            } else {
+                merged.append(stop)
+            }
+        }
+        guard let first = merged.first, let last = merged.last else { return [] }
+        var stops = merged
+        if first.location > 0.0008 {
+            let span = (1 - last.location) + first.location
+            let t = span > 0 ? (1 - last.location) / span : 0
+            let edge = last.color.mixed(toward: first.color, amount: t)
+            stops.insert(NeonStop(location: 0, color: edge), at: 0)
+            stops.append(NeonStop(location: 1, color: edge))
+        } else {
+            stops.append(NeonStop(location: 1, color: first.color))
+        }
+        return stops.map { .init(color: $0.color.color, location: $0.location) }
     }
 }

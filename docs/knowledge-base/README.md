@@ -1,6 +1,6 @@
 # MenuTools Knowledge Base
 
-Focused notes on how MenuTools works, written for maintainers and coding agents. The short rules live in `AGENTS.md` (imported by `CLAUDE.md`). These notes hold the detail: endpoints, state machines, geometry, timings and measurements.
+Focused notes on how MenuTools works, written for maintainers and coding agents. Start with the full orientation in [`docs/AGENT_GUIDE.md`](../AGENT_GUIDE.md). The short rules live in `AGENTS.md` (imported by `CLAUDE.md`). These notes hold the detail: endpoints, state machines, geometry, timings and measurements.
 
 | Note | Covers |
 |---|---|
@@ -15,6 +15,7 @@ Focused notes on how MenuTools works, written for maintainers and coding agents.
 | [window-controls.md](window-controls.md) | Green maximize and red quit: event tap, Accessibility requirement, fast path, animation design, quit timing. |
 | [performance.md](performance.md) | Timer and watcher inventory, measurement method, baseline and measurement history, open items. |
 | [system-stats.md](system-stats.md) | Clickable CPU, memory, temperature, network and battery details: what each page shows and where the numbers come from. |
+| [pixel-shimmer.md](pixel-shimmer.md) | SymVibe `.sf-face` city-lights pixel recipe (tried on running rows / Awake, then removed). |
 | [troubleshooting.md](troubleshooting.md) | Symptom → cause → fix for window controls, AI limits, preview and build, sleep, shelf and drag, performance. |
 
 ## Conventions

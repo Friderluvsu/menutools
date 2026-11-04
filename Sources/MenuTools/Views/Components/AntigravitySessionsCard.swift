@@ -25,7 +25,8 @@ struct AntigravitySessionsCard: View {
                                 name: item.name,
                                 project: item.project,
                                 details: SessionDetailFields.antigravityEnded(item),
-                                fresh: !item.seen || manager.freshEnded.contains(item.id)
+                                fresh: !item.seen || manager.freshEnded.contains(item.id),
+                                when: endedAgo(item.endedAt, now: context.date)
                             ) {
                                 manager.revealEnded(item)
                             } onDismiss: {

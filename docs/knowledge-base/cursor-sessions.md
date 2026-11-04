@@ -18,27 +18,27 @@ Nothing is listed unless a process named `Cursor` is running. Quit Cursor and th
 
 ## What counts as live
 
-`unfinishedRunAt` stays set on chats that were interrupted, so it is not enough on its own.
+`unfinishedRunAt` on the header stays set on chats that were interrupted, so it is not enough on its own. Clean in-progress turns (a first `sleep 30`, a long shell tool) often never write that field: Cursor keeps `chatGenerationUUID` on `composerData:<id>` instead and clears it when the turn completes. MenuTools json_extracts that blob (status, `chatGenerationUUID`, `generatingBubbleIds`, `unfinishedRunAt`) only for headers whose checkpoint is under 30 minutes old.
 
 | State | Rule | Row |
 |---|---|---|
-| Running | `unfinishedRunAt` is set and `conversationCheckpointLastUpdatedAt` (or `lastUpdatedAt`) is under 3 minutes old | **Running** (green) |
-| Needs the user | `hasBlockingPendingActions` | **Input needed** (orange), kept for 30 minutes after the last checkpoint |
-| Plan | `hasPendingPlan` | **Plan** (orange), same 30 minute window |
+| Running | `chatGenerationUUID` is set, or `status` is `generating`, or `generatingBubbleIds` is non-empty; **or** `unfinishedRunAt` is set and `conversationCheckpointLastUpdatedAt` (or `lastUpdatedAt`) is under 3 minutes old | **Running** (green) |
+| Needs the user | `hasBlockingPendingActions` on the header or `composerData`; **or** an `ask_question` tool bubble whose `toolFormerData.status` / `additionalData.status` is `loading` or `pending` (AskQuestion often never flips the header flag — Cursor notifies from memory) | **Input needed** (orange), kept for 30 minutes after the last checkpoint |
+| Plan | `hasPendingPlan` on the header or `composerData` | **Plan** (orange), same 30 minute window |
 
-Drafts, archived chats and subagents are skipped. Needs-input rows are listed first.
+Drafts, archived chats and subagents are skipped. Needs-input rows are listed first. Conversation message blobs are still never opened. A busy lock on `state.vscdb` keeps the previous live rows instead of clearing the ring.
 
 ## When a chat ends
 
-MenuTools remembers a chat only after it has seen that chat running (fresh `unfinishedRunAt`). The set is stored in `~/Library/Application Support/MenuTools/cursor-session-watch.json`, so it survives a relaunch during a long task.
+MenuTools remembers a chat only after it has seen that chat running (active generation or fresh `unfinishedRunAt`). The set is stored in `~/Library/Application Support/MenuTools/cursor-session-watch.json`, so it survives a relaunch during a long task.
 
-On a later read, if that same header is still in the table and `unfinishedRunAt` is gone, the chat finished. MenuTools then:
+On a later read, if that same header is still in the table and the active-generation signals are gone (`chatGenerationUUID` cleared and no `unfinishedRunAt`), the chat finished. MenuTools then:
 
 - posts a notification titled **Cursor finished**, body `name · project`
 - adds an **Ended** row on the Cursor card (blue, so it does not look like a chat that needs input)
 - turns the lower-left segment of the menu bar ring blue until that row is on screen
 
-Opening the panel clears the blue segment when the row is in the dashboard list. More than three rows collapse to a Sessions summary, and that summary does not count: the segment and the blue row stay until the Sessions page is opened. Ended rows you have already seen turn grey, and the word Ended stays blue. A finish you have not seen keeps the blue row, and stays at the top, until you close the panel after seeing it. Ended rows stay until the x on the row is pressed, so two chats that finish together both remain. The first time a live chat is waiting, MenuTools posts **Cursor needs input** (same body) and, on that same read, turns the top segment orange while the panel stays closed. Orange stays until that chat is no longer waiting. The id is stored in the watch file, so a relaunch does not post again for the same wait. A running chat turns the lower-right segment green. Opening the panel does not clear orange or green. If the same `composerId` becomes live again (another turn in that chat), its Ended row is dropped so the card is not duplicated. Cursor not running does not count as finished: the tracked ids stay until the headers themselves say the run is over.
+Opening the panel clears the blue segment when the row is in the dashboard list. More than three rows collapse to a Sessions summary, and that summary does not count: the segment and the blue row stay until the Sessions page is opened. Ended rows you have already seen turn grey, and the word Ended stays blue. A finish you have not seen keeps the blue row, and stays at the top, until you close the panel after seeing it. The uptime slot shows when it finished: `just now`, `4m ago`, `2h ago`, `1d ago`. Ended rows stay until the x on the row is pressed, so two chats that finish together both remain. The first time a live chat is waiting, MenuTools posts **Cursor needs input** (same body) and, on that same read, turns the top segment orange while the panel stays closed. Orange stays until that chat is no longer waiting. The id is stored in the watch file, so a relaunch does not post again for the same wait. A running chat turns the lower-right segment green. Opening the panel does not clear orange or green. If the same `composerId` becomes live again (another turn in that chat), its Ended row is dropped so the card is not duplicated. Cursor not running does not count as finished: the tracked ids stay until the headers themselves say the run is over.
 
 The watch starts at launch. While Cursor is running, or while the panel is open, the read is every 2 s (tolerance 0.5 s). Otherwise it is every 15 s. That way a second short chat is not missed between polls.
 

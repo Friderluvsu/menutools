@@ -27,6 +27,7 @@ struct CursorSessionsCard: View {
                                 project: item.project,
                                 details: SessionDetailFields.cursorEnded(item),
                                 fresh: !item.seen || manager.freshEnded.contains(item.id),
+                                when: endedAgo(item.endedAt, now: context.date),
                                 helpNote: "Chat ended. Click to show this project in Cursor"
                             ) {
                                 manager.revealEnded(item)

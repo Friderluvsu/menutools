@@ -48,7 +48,7 @@ The panel is a key-capable `NSPanel` without `.nonactivatingPanel` (see AGENTS r
 - `PanelHeightKey` reports the natural height of the SwiftUI root. `panelContentHeightChanged` stores it and refits the window on that same turn with `setFrame(..., animate: false)`. The top edge is captured when the panel opens (`anchoredPanelTop`) and height changes keep that edge, so only the bottom moves.
 - `showPanel` lays the view out before positioning, so the first frame is correct.
 - The hosting view has `sizingOptions = []`. The panel frame is driven only by the reported height.
-- The Sessions page caps that height. Its filter stays put, and the list scrolls once the panel would pass `visibleFrame.height - 8`. The dashboard, Settings and stat pages still report their natural height and do not scroll.
+- The Sessions page caps that height. Its filter stays put, and the list scrolls once the panel would pass `visibleFrame.height - 8`. The scrolling list leaves a trailing gutter so the scroller does not cover the rows. The dashboard, Settings and stat pages still report their natural height and do not scroll.
 
 ## Known gaps and manual checks
 - If the drag session swallows the final mouse-up, the panel stays open until the next outside click. The press then restarts normally.

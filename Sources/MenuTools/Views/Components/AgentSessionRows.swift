@@ -186,6 +186,15 @@ func endedRowsFreshFirst<Item>(_ items: [Item], isFresh: (Item) -> Bool) -> [Ite
     items.sorted { isFresh($0) && !isFresh($1) }
 }
 
+/// "just now", "4m ago", "2h ago", "1d ago". Shown where a live row shows uptime.
+func endedAgo(_ date: Date, now: Date) -> String {
+    let whole = Int(max(0, now.timeIntervalSince(date)))
+    if whole < 45 { return "just now" }
+    if whole < 3_600 { return "\(max(whole / 60, 1))m ago" }
+    if whole < 86_400 { return "\(whole / 3_600)h ago" }
+    return "\(whole / 86_400)d ago"
+}
+
 struct AgentEndedRow: View {
     let expansionID: String
     let name: String
@@ -193,6 +202,8 @@ struct AgentEndedRow: View {
     let details: [SessionDetailField]
     /// Unchecked finish. After the panel has been opened on it, the row goes grey and Ended stays blue.
     var fresh: Bool = false
+    /// Same slot as a live row's uptime: "just now", "4m ago".
+    var when: String? = nil
     var helpNote: String = "Chat ended. Click to show this project"
     let onReveal: () -> Void
     let onDismiss: () -> Void
@@ -205,7 +216,7 @@ struct AgentEndedRow: View {
             statusColor: SessionStatusTone.ended.color,
             dotColor: fresh ? SessionStatusTone.ended.color : Color.secondary,
             project: project,
-            uptime: nil,
+            uptime: when,
             details: details,
             fill: fresh ? SessionStatusTone.ended.rowFill : Color.secondary.opacity(0.14),
             helpText: helpNote,

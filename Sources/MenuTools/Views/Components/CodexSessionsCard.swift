@@ -25,7 +25,8 @@ struct CodexSessionsCard: View {
                                 name: item.name,
                                 project: item.project,
                                 details: SessionDetailFields.codexEnded(item),
-                                fresh: !item.seen || manager.freshEnded.contains(item.id)
+                                fresh: !item.seen || manager.freshEnded.contains(item.id),
+                                when: endedAgo(item.endedAt, now: context.date)
                             ) {
                                 manager.revealEnded(item)
                             } onDismiss: {
