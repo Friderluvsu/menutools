@@ -29,6 +29,9 @@ Each entry gives the symptom, the cause in the code, and the fix. Source referen
 ### Claude card: "Token lacks usage scope"
 - HTTP 403. Sign in again with `claude`.
 
+### Claude card shows "Signed in" with no bars
+- The usage call succeeded and the plan name is known, but there were no windows to draw. Pro/Max should have Session/Week. Enterprise should have **Included** (dollar pool) and **Spend** (`extra_usage` / `spend`). If extra usage is off and the payload has no dollar pool, there is nothing to show.
+
 ### Claude or Codex card: "Rate limited, retry later"
 - HTTP 429. The provider is blocked for the `Retry-After` time (at least 60 s, at most 1 h), and the block survives relaunches. Without cached data the row shows `Rate limited — retry in …`. Wait; the refresh button does not bypass this block.
 
@@ -47,6 +50,15 @@ Each entry gives the symptom, the cause in the code, and the fix. Source referen
 ### Antigravity card: "Language server did not respond" or "Quota API unavailable"
 - The IDE's RPC or the cloud quota API failed. Antigravity falls back to the CLI token on the next refresh. If it persists, restart the IDE.
 
+### Cursor card: "Install the Cursor CLI"
+- `agent` was not executable at `~/.local/bin/agent`, `/opt/homebrew/bin/agent` or `/usr/local/bin/agent`. Install the Cursor CLI, then open the panel again.
+
+### Cursor card: "Login expired — run agent login"
+- `agent status --format json` reported that the CLI is not signed in. Click **Run** or run `agent login`. MenuTools does not read or refresh the CLI's token.
+
+### Cursor card: "Couldn't read Cursor usage"
+- `agent about` failed, or it returned a plan without period usage. Retry once the CLI can reach the network. The usage numbers come from `Resources/cursor-usage-hook.js` running inside that CLI process. A Cursor CLI update that changes the `about` command can make the hook miss; the row then shows this message until the hook is updated.
+
 ## Preview and build
 
 ### The menu bar app closes when I run `make preview`
@@ -57,6 +69,9 @@ Each entry gives the symptom, the cause in the code, and the fix. Source referen
 
 ### Launching the app does nothing
 - A second copy is already running. The single-instance check in `main.swift` exits quietly. Quit the other copy, then launch again.
+
+### `make run` prints `_LSOpenURLsWithCompletionHandler() failed with error -600`
+- The release build succeeded. `open` ran while the previous MenuTools was still quitting after `killall`, and Launch Services tried to message that process (`procNotFound`, -600). `scripts/run.sh` now waits until the process is gone before opening the new bundle. Run `make run` again.
 
 ## Sleep
 
@@ -87,6 +102,17 @@ Each entry gives the symptom, the cause in the code, and the fix. Source referen
 
 ### Battery icon looks wrong in one appearance
 - Icons are redrawn when `NSApp.effectiveAppearance` changes. Render all styles with `--render-battery-icons <dir>` and compare dark and light (`battery-icons.md`).
+
+## Sessions
+
+### Codex card stays empty while ChatGPT is open
+- Live rows are `codex` CLI processes only. ChatGPT.app threads are not listed. Start `codex` in a terminal in the project.
+
+### Antigravity card stays empty while a conversation is open
+- Nothing is listed unless the Antigravity IDE or `agy` is running, and the summary row is live (`RUNNING` / `BUSY` / `not_fully_idle`, or wait / input / approval). Idle conversations are omitted on purpose.
+
+### An Ended row is missing after two chats finished
+- Ended rows stay until the x is pressed. If both chats were shorter than the idle poll (15 s with the panel closed and the app quit), open the panel or keep the app running so the 2 s poll can see them.
 
 ## Converter
 

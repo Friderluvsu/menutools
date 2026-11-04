@@ -292,6 +292,17 @@ public final class SMCDriver: @unchecked Sendable {
         return nil
     }
     
+    /// GPU diode average. Nil when this Mac publishes none of the GPU keys, so a CPU reading is not shown in its place.
+    public func readGPUTemperature() -> Double? {
+        let keys = ["TG0D", "TG0P", "Tg05", "Tg0D", "Tg0P", "TG0B", "TG0T", "Tg0a", "Tg1a"]
+        var valid: [Double] = []
+        for key in keys {
+            if let temp = readSingleKeyTemperature(key) { valid.append(temp) }
+        }
+        guard !valid.isEmpty else { return nil }
+        return valid.reduce(0, +) / Double(valid.count)
+    }
+
     public func readCPUTemperature() -> Double {
         let sensorKeys = [
             "Tc0a", "Tc7a", "Tc8a", "Tc9a", "Tcaa",

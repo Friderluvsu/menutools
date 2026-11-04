@@ -82,6 +82,7 @@ struct ShelfCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .suppressesFocusRing()
                 .help("Show all")
             }
         }
@@ -96,6 +97,7 @@ struct ShelfCard: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
+        .suppressesFocusRing()
         .help(help)
     }
 }

@@ -135,11 +135,17 @@ struct HoverHighlight: ViewModifier {
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
             }
+            .onDisappear { isHovered = false }
     }
 }
 
 extension View {
     func hoverHighlight(cornerRadius: CGFloat = 8) -> some View {
         modifier(HoverHighlight(cornerRadius: cornerRadius))
+    }
+
+    /// Clicks in the panel should not draw the accent focus ring.
+    func suppressesFocusRing() -> some View {
+        focusable(false).focusEffectDisabled()
     }
 }

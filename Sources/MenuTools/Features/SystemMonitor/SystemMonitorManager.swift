@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import SystemConfiguration
 
 @MainActor
 final class SystemMonitorManager: ObservableObject {
@@ -10,9 +11,21 @@ final class SystemMonitorManager: ObservableObject {
     @Published var memoryPercent: Double = 0.0
     @Published var downloadSpeedKBps: Double = 0.0
     @Published var uploadSpeedKBps: Double = 0.0
+    /// Nil until the accelerator has reported a utilization.
+    @Published var gpuUsage: Double?
+    /// Nil until the startup volume has been read. Free and total stay 0 until then.
+    @Published var diskUsedPercent: Double?
+    @Published var diskFreeBytes: UInt64 = 0
+    @Published var diskTotalBytes: UInt64 = 0
+    @Published var diskName: String = ""
     @Published var localIP: String = "127.0.0.1"
     @Published var publicIP: String = "..."
 
+    /// Detail page state. The dashboard tiles do not observe this.
+    let details = SystemStatDetails()
+
+    /// History keeps running while the panel is closed. Tile publishes wait until it is open.
+    private var panelOpen = false
     private var cancellable: AnyCancellable?
     private var warmupWorkItem: DispatchWorkItem?
     private var previousCPUInfo: host_cpu_load_info?
@@ -21,6 +34,16 @@ final class SystemMonitorManager: ObservableObject {
     private var previousTimestamp: Date = Date()
     private var isUpdating: Bool = false
     private var tickCount: Int = 0
+    private var previousCoreTicks: [Int32] = []
+    private var coreLayout: CoreLayout?
+    private let processSampler = ProcessSampler()
+    private let gpuProcessSampler = GPUProcessSampler()
+    private var samplingProcesses = false
+    private var samplingGPU = false
+    private var processFollowUp: DispatchWorkItem?
+    private var latencyCancellable: AnyCancellable?
+    private var latencySamples: [Double] = []
+    private var pingInFlight = false
 
     private var lastPublicIPFetch: Date?
     private var isFetchingPublicIP: Bool = false
@@ -33,19 +56,10 @@ final class SystemMonitorManager: ObservableObject {
         updateLocalIP()
     }
 
-    func startMonitoring() {
+    /// Starts the 2 s history sampler. Called once at launch so the graphs already have samples when the panel opens.
+    func startHistorySampling() {
         guard cancellable == nil else { return }
-        // Drop counters from the previous session so the first sample is a clean baseline
-        // instead of an average over the whole time the panel was closed.
-        previousCPUInfo = nil
-        previousBytesIn = 0
-        previousBytesOut = 0
-        tickCount = 0
         updateStats()
-        fetchPublicIPIfStale()
-        updateLocalIP()
-
-        // Quick second sample so speeds and CPU show real values right after opening.
         let warmup = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.updateStats() }
         }
@@ -59,15 +73,110 @@ final class SystemMonitorManager: ObservableObject {
             }
     }
 
+    func startMonitoring() {
+        panelOpen = true
+        if cancellable == nil { startHistorySampling() } else { updateStats() }
+        fetchPublicIPIfStale()
+        updateLocalIP()
+        startLatencyProbe()
+    }
+
     func stopMonitoring() {
-        warmupWorkItem?.cancel()
-        warmupWorkItem = nil
-        cancellable?.cancel()
-        cancellable = nil
+        panelOpen = false
+        processFollowUp?.cancel()
+        processFollowUp = nil
+        processSampler.reset()
+        gpuProcessSampler.reset()
+        stopLatencyProbe()
+    }
+
+    /// CPU and Memory pages walk processes. The GPU page reads accelerator clients instead.
+    func setStatFocus(_ topic: StatTopic?) {
+        let wantsProcesses = topic == .cpu || topic == .memory
+        let wantsGPU = topic == .gpu
+        processFollowUp?.cancel()
+        processFollowUp = nil
+        if wantsProcesses != samplingProcesses {
+            samplingProcesses = wantsProcesses
+            processSampler.reset()
+            if !wantsProcesses {
+                details.apply {
+                    $0.topCPU = []
+                    $0.topMemory = []
+                }
+            }
+        }
+        if wantsGPU != samplingGPU {
+            samplingGPU = wantsGPU
+            gpuProcessSampler.reset()
+            if !wantsGPU {
+                details.apply { $0.topGPU = [] }
+            }
+        }
+        guard wantsProcesses || wantsGPU else { return }
+        sampleFocusedLists()
+        let follow = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.sampleFocusedLists() }
+        }
+        processFollowUp = follow
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: follow)
+    }
+
+    private func sampleFocusedLists() {
+        if samplingProcesses { sampleProcesses() }
+        if samplingGPU { sampleGPUProcesses() }
+    }
+
+    private func sampleProcesses() {
+        guard samplingProcesses else { return }
+        let sampler = processSampler
+        Task.detached(priority: .utility) { [weak self] in
+            let ranked = sampler.sample()
+            await MainActor.run { [weak self] in
+                guard let self, self.samplingProcesses else { return }
+                self.details.apply {
+                    $0.topCPU = ranked.cpu
+                    $0.topMemory = ranked.memory
+                }
+            }
+        }
+    }
+
+    private func sampleGPUProcesses() {
+        guard samplingGPU else { return }
+        let sampler = gpuProcessSampler
+        Task.detached(priority: .utility) { [weak self] in
+            let ranked = sampler.sample()
+            await MainActor.run { [weak self] in
+                guard let self, self.samplingGPU else { return }
+                self.details.apply { $0.topGPU = ranked }
+            }
+        }
+    }
+
+    /// Free space moves in small steps. Ignore anything under about 50 MB so the tile stays still.
+    private func publishDisk(_ disk: DiskVolume) {
+        let percent = disk.usedFraction * 100
+        if diskUsedPercent == nil || abs((diskUsedPercent ?? 0) - percent) >= 0.5 {
+            diskUsedPercent = percent
+        }
+        if Self.byteGap(diskFreeBytes, disk.availableBytes) >= 50_000_000 {
+            diskFreeBytes = disk.availableBytes
+        }
+        if Self.byteGap(diskTotalBytes, disk.totalBytes) >= 50_000_000 {
+            diskTotalBytes = disk.totalBytes
+        }
+        if diskName != disk.name { diskName = disk.name }
+    }
+
+    private static func byteGap(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        lhs > rhs ? lhs - rhs : rhs - lhs
     }
 
     /// Assign only when the displayed value would actually change, so idle ticks do not re-render SwiftUI.
-    private func setIfChanged(_ keyPath: ReferenceWritableKeyPath<SystemMonitorManager, Double>, _ value: Double, epsilon: Double) {
+    private func setIfChanged(
+        _ keyPath: ReferenceWritableKeyPath<SystemMonitorManager, Double>, _ value: Double, epsilon: Double
+    ) {
         if abs(self[keyPath: keyPath] - value) >= epsilon {
             self[keyPath: keyPath] = value
         }
@@ -85,10 +194,19 @@ final class SystemMonitorManager: ObservableObject {
         // Temperature walks ~36 SMC keys; it moves slowly, so sample it every other tick.
         let readTemperature = tickCount % 2 == 0
         tickCount &+= 1
+        let prevTicks = previousCoreTicks
+        let knownLayout = coreLayout
+        let includeProcesses = samplingProcesses
+        let includeGPU = samplingGPU
+        let sampler = processSampler
+        let gpuSampler = gpuProcessSampler
 
         Task.detached(priority: .utility) { [weak self] in
             // 1. CPU
             var newCPU: Double?
+            var cpuUser: Double?
+            var cpuSystem: Double?
+            var cpuIdle: Double?
             var count = mach_msg_type_number_t(
                 MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
             var cpuInfo = host_cpu_load_info()
@@ -110,6 +228,9 @@ final class SystemMonitorManager: ObservableObject {
                     if total > 0 {
                         let usage = ((user + sys + nice) / total) * 100.0
                         newCPU = min(100.0, max(0.0, usage))
+                        cpuUser = min(100, max(0, (user + nice) / total * 100))
+                        cpuSystem = min(100, max(0, sys / total * 100))
+                        cpuIdle = min(100, max(0, idle / total * 100))
                     }
                 }
                 prevCPU = cpuInfo
@@ -118,6 +239,10 @@ final class SystemMonitorManager: ObservableObject {
             // 2. RAM
             var newUsedGB: Double = 0.0
             var newMemPercent: Double = 0.0
+            var appGB = 0.0
+            var wiredGB = 0.0
+            var compressedGB = 0.0
+            var cachedGB = 0.0
             var vmCount = mach_msg_type_number_t(
                 MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
             var vmStat = vm_statistics64()
@@ -138,6 +263,14 @@ final class SystemMonitorManager: ObservableObject {
                 if totalGB > 0 {
                     newMemPercent = min(100.0, (newUsedGB / totalGB) * 100.0)
                 }
+                let gigabyte = 1024.0 * 1024.0 * 1024.0
+                let internalBytes = Double(vmStat.internal_page_count) * pageSize
+                let purgeable = Double(vmStat.purgeable_count) * pageSize
+                let external = Double(vmStat.external_page_count) * pageSize
+                appGB = max(0, internalBytes - purgeable) / gigabyte
+                wiredGB = wired / gigabyte
+                compressedGB = compressed / gigabyte
+                cachedGB = (purgeable + external) / gigabyte
             }
 
             // 3. Network Bandwidth
@@ -175,25 +308,113 @@ final class SystemMonitorManager: ObservableObject {
 
             // Read real hardware CPU temperature from SMC
             let realTemp: Double? = readTemperature ? SMCDriver.shared.readCPUTemperature() : nil
+            let gpuTemp: Double? = readTemperature ? SMCDriver.shared.readGPUTemperature() : nil
+            let gpu = GPUSampler.read()
+            let link = NetworkLink.label()
+
+            let layout = knownLayout ?? CoreLayout.read()
+            let cores = CoreSampler.read(previous: prevTicks, layout: layout)
+            let load = StatSampler.loads()
+            let pressure = StatSampler.pressureLabel()
+            let swap = StatSampler.swapUsedBytes()
+            let uptime = ProcessInfo.processInfo.systemUptime
+            let ranked: ProcessRanking? = includeProcesses ? sampler.sample() : nil
+            let gpuProcesses: [ProcessStat]? = includeGPU ? gpuSampler.sample() : nil
+            let disks = DiskSampler.read()
 
             await MainActor.run {
-                [weak self, newCPU, newUsedGB, newMemPercent, downSpeed, upSpeed, totalBytesIn, totalBytesOut] in
+                [
+                    weak self, newCPU, cpuUser, cpuSystem, cpuIdle, newUsedGB, newMemPercent, downSpeed, upSpeed,
+                    totalBytesIn, totalBytesOut, appGB, wiredGB, compressedGB, cachedGB,
+                ] in
                 guard let self = self else { return }
-                if let newCPU { self.setIfChanged(\.cpuUsage, newCPU, epsilon: 0.1) }
-                if let realTemp { self.setIfChanged(\.cpuTemperature, realTemp, epsilon: 0.5) }
-                self.setIfChanged(\.memoryUsedGB, newUsedGB, epsilon: 0.05)
-                self.setIfChanged(\.memoryPercent, newMemPercent, epsilon: 0.5)
-                // Speeds jitter every sample; ignore sub-0.5 KB/s or sub-3% moves.
-                if let downSpeed, abs(self.downloadSpeedKBps - downSpeed) >= max(0.5, self.downloadSpeedKBps * 0.03) {
-                    self.downloadSpeedKBps = downSpeed
-                }
-                if let upSpeed, abs(self.uploadSpeedKBps - upSpeed) >= max(0.5, self.uploadSpeedKBps * 0.03) {
-                    self.uploadSpeedKBps = upSpeed
+                if self.panelOpen {
+                    if let newCPU { self.setIfChanged(\.cpuUsage, newCPU, epsilon: 0.1) }
+                    if let realTemp { self.setIfChanged(\.cpuTemperature, realTemp, epsilon: 0.5) }
+                    self.setIfChanged(\.memoryUsedGB, newUsedGB, epsilon: 0.05)
+                    self.setIfChanged(\.memoryPercent, newMemPercent, epsilon: 0.5)
+                    // Speeds jitter every sample; ignore sub-0.5 KB/s or sub-3% moves.
+                    if let downSpeed, abs(self.downloadSpeedKBps - downSpeed) >= max(0.5, self.downloadSpeedKBps * 0.03)
+                    {
+                        self.downloadSpeedKBps = downSpeed
+                    }
+                    if let upSpeed, abs(self.uploadSpeedKBps - upSpeed) >= max(0.5, self.uploadSpeedKBps * 0.03) {
+                        self.uploadSpeedKBps = upSpeed
+                    }
+                    if let device = gpu.device, self.gpuUsage == nil || abs((self.gpuUsage ?? 0) - device) >= 0.5 {
+                        self.gpuUsage = device
+                    }
+                    if let startup = disks.first(where: \.isStartup) ?? disks.first {
+                        self.publishDisk(startup)
+                    }
                 }
                 self.previousCPUInfo = prevCPU
                 self.previousBytesIn = totalBytesIn
                 self.previousBytesOut = totalBytesOut
                 self.previousTimestamp = now
+                if self.coreLayout != layout { self.coreLayout = layout }
+                self.previousCoreTicks = cores.ticks
+                self.details.apply { snap in
+                    if let newCPU {
+                        snap.cpuUsage = newCPU
+                        snap.push(newCPU, into: \.cpuHistory)
+                    }
+                    if let cpuUser { snap.cpuUser = cpuUser }
+                    if let cpuSystem { snap.cpuSystem = cpuSystem }
+                    if let cpuIdle { snap.cpuIdle = cpuIdle }
+                    snap.cpuPerformance = cores.performance
+                    snap.cpuEfficiency = cores.efficiency
+                    if let load {
+                        snap.load1 = load.0
+                        snap.load5 = load.1
+                        snap.load15 = load.2
+                    }
+                    snap.uptime = uptime
+                    snap.memoryUsedGB = newUsedGB
+                    snap.memoryTotalGB = totalGB
+                    snap.memoryPercent = newMemPercent
+                    snap.memoryAppGB = appGB
+                    snap.memoryWiredGB = wiredGB
+                    snap.memoryCompressedGB = compressedGB
+                    snap.memoryCachedGB = cachedGB
+                    snap.swapUsedBytes = swap
+                    snap.memoryPressure = pressure
+                    snap.push(newMemPercent, into: \.memoryHistory)
+                    if let realTemp {
+                        snap.temperature = realTemp
+                        snap.push(realTemp, into: \.temperatureHistory)
+                    }
+                    if let downSpeed {
+                        snap.downloadKBps = downSpeed
+                        snap.push(downSpeed, into: \.downloadHistory)
+                    }
+                    if let upSpeed {
+                        snap.uploadKBps = upSpeed
+                        snap.push(upSpeed, into: \.uploadHistory)
+                    }
+                    snap.bytesIn = totalBytesIn
+                    snap.bytesOut = totalBytesOut
+                    if let link { snap.interfaceLabel = link }
+                    if let device = gpu.device {
+                        snap.gpuUsage = device
+                        snap.push(device, into: \.gpuHistory)
+                    }
+                    snap.gpuRenderer = gpu.renderer
+                    snap.gpuTiler = gpu.tiler
+                    if let used = gpu.inUseBytes { snap.gpuMemoryBytes = used }
+                    if let allocated = gpu.allocatedBytes { snap.gpuAllocatedBytes = allocated }
+                    if let model = gpu.model { snap.gpuModel = model }
+                    if let cores = gpu.cores { snap.gpuCores = cores }
+                    if let gpuTemp { snap.gpuTemperature = gpuTemp }
+                    if let ranked, self.samplingProcesses {
+                        snap.topCPU = ranked.cpu
+                        snap.topMemory = ranked.memory
+                    }
+                    if let gpuProcesses, self.samplingGPU {
+                        snap.topGPU = gpuProcesses
+                    }
+                    if !disks.isEmpty { snap.disks = disks }
+                }
                 self.isUpdating = false
             }
         }
@@ -284,6 +505,75 @@ final class SystemMonitorManager: ObservableObject {
         }
     }
 
+    /// One ping every few seconds while the panel is open. Jitter is how much the round trip moves.
+    private func startLatencyProbe() {
+        guard latencyCancellable == nil else { return }
+        probeLatency()
+        latencyCancellable = Timer.publish(every: 3, tolerance: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.probeLatency() }
+    }
+
+    private func stopLatencyProbe() {
+        latencyCancellable?.cancel()
+        latencyCancellable = nil
+        pingInFlight = false
+    }
+
+    private func probeLatency() {
+        guard panelOpen, !pingInFlight else { return }
+        pingInFlight = true
+        Task.detached(priority: .utility) { [weak self] in
+            let milliseconds = Self.pingMilliseconds()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.pingInFlight = false
+                guard self.panelOpen, let milliseconds else { return }
+                self.latencySamples.append(milliseconds)
+                if self.latencySamples.count > 8 { self.latencySamples.removeFirst(self.latencySamples.count - 8) }
+                let jitter = Self.jitter(self.latencySamples)
+                self.details.apply {
+                    $0.latencyMs = milliseconds
+                    $0.jitterMs = jitter
+                }
+            }
+        }
+    }
+
+    /// Mean change between successive round trips. Nil until two pings have landed.
+    private static func jitter(_ samples: [Double]) -> Double? {
+        guard samples.count >= 2 else { return nil }
+        var sum = 0.0
+        for index in 1..<samples.count {
+            sum += abs(samples[index] - samples[index - 1])
+        }
+        return sum / Double(samples.count - 1)
+    }
+
+    nonisolated private static func pingMilliseconds() -> Double? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/sbin/ping")
+        process.arguments = ["-c", "1", "-W", "1000", "1.1.1.1"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8),
+            let expression = try? NSRegularExpression(pattern: #"time=([0-9]+(?:\.[0-9]+)?)"#)
+        else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = expression.firstMatch(in: text, range: range), match.numberOfRanges > 1,
+            let valueRange = Range(match.range(at: 1), in: text)
+        else { return nil }
+        return Double(text[valueRange])
+    }
+
     nonisolated private static func requestIP(_ urlString: String) async -> String? {
         guard let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 3)
@@ -297,5 +587,21 @@ final class SystemMonitorManager: ObservableObject {
         let allowed = CharacterSet(charactersIn: "0123456789abcdefABCDEF.:")
         guard !trimmed.isEmpty, trimmed.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
         return trimmed
+    }
+}
+
+/// Primary interface kind. Addresses stay on the LAN and WAN chips.
+enum NetworkLink {
+    static func label() -> String? {
+        guard let store = SCDynamicStoreCreate(nil, "MenuTools.stats" as CFString, nil, nil) else { return nil }
+        let global = "State:/Network/Global/IPv4" as CFString
+        guard let ipv4 = SCDynamicStoreCopyValue(store, global) as? [String: Any],
+            let name = ipv4["PrimaryInterface"] as? String, !name.isEmpty
+        else { return nil }
+        let airport = "State:/Network/Interface/\(name)/AirPort" as CFString
+        if SCDynamicStoreCopyValue(store, airport) != nil { return "Wi-Fi" }
+        if name.hasPrefix("en") { return "Ethernet" }
+        if name.hasPrefix("utun") || name.hasPrefix("ipsec") { return "VPN" }
+        return name
     }
 }

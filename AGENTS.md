@@ -1,7 +1,7 @@
 # MenuTools Agent Reference
 
 ## Overview
-MenuTools is a lightweight native macOS Menu Bar application (AppKit + SwiftUI) targeting macOS 14.0+. It provides system monitoring, AI subscription limits (Claude Code, Codex, Antigravity), a temporary file shelf, media conversion (FFmpeg / sips), sleep management (`IOPMAssertion` / `pmset`), fan control via AppleSMC, network bypass (VanyaVPN + SpoofDPI), Low Power Mode toggle, clipboard history, window controls (green maximize, red quit on close) and iMessage shortcuts.
+MenuTools is a lightweight native macOS Menu Bar application (AppKit + SwiftUI) targeting macOS 14.0+. It provides system monitoring, AI subscription limits (Claude Code, Codex, Antigravity, Cursor), live Claude Code, Cursor, Codex and Antigravity sessions, a temporary file shelf, media conversion (FFmpeg / sips), sleep management (`IOPMAssertion` / `pmset`), fan control via AppleSMC, network bypass (VanyaVPN + SpoofDPI), Low Power Mode toggle, clipboard history, window controls (green maximize, red quit on close) and iMessage shortcuts.
 
 Rules live here. Long-form details (endpoints, state machines, measurements) live in `docs/knowledge-base/` (index: `docs/knowledge-base/README.md`).
 
@@ -16,7 +16,11 @@ Sources/
 │   │   ├── AppState.swift         # Central coordinator; starts/stops manager polling with the panel
 │   │   └── PreviewRenderer.swift  # Offscreen SwiftUI renderer for --render-preview / --render-battery-icons
 │   ├── Features/
-│   │   ├── AILimits/              # Claude Code / Codex / Antigravity limits: fetchers, cache, manager
+│   │   ├── AILimits/              # Claude Code / Codex / Antigravity / Cursor limits: fetchers, cache, manager
+│   │   ├── ClaudeSessions/        # Live Claude Code sessions from ~/.claude/sessions/<pid>.json
+│   │   ├── CursorSessions/        # Live Cursor agent chats from composer headers in state.vscdb
+│   │   ├── CodexSessions/         # Live Codex CLI processes; cwd via proc_pidinfo
+│   │   ├── AntigravitySessions/   # Live Antigravity chats from conversation_summaries.db
 │   │   ├── AntiSleep/             # IOPMAssertion + caffeinate + lid sleep prevention
 │   │   ├── Battery/               # IOKit.ps reader & appearance-aware BatteryIconRenderer
 │   │   ├── Clipboard/             # History store (JSON), ⌥⌘V hotkey, floating HUD
@@ -34,7 +38,7 @@ Sources/
 │   │   └── CarbonHotKeyHelper.swift # Carbon event hotkey registration
 │   └── Views/
 │       ├── PopoverContentView.swift # Panel root & dashboard sections (no ScrollView)
-│       ├── Components/            # Cards, tiles, theme, pickers: AILimitsCard, ShelfCard, FanControlPickerView, ...
+│       ├── Components/            # Cards, tiles, theme, pickers: AILimitsCard, SessionsDashboardSection, ShelfCard, FanControlPickerView, ...
 │       └── Tabs/                  # SettingsTabView is live; other tab files are unreferenced legacy
 └── MenuToolsSMCHelper/
     └── main.swift                 # SUID/privileged CLI helper for AppleSMC & pmset
@@ -64,9 +68,10 @@ make format      # Run swift-format in-place
 
 Run the bundle binary (`build/MenuTools.app/Contents/MacOS/MenuTools`), never a `.build` binary.
 
-- `--render-preview <png> [--settings] [--anti-sleep-picker] [--fan-picker] [--sample-tasks]`: renders the panel offscreen at its natural height, then exits. `--sample-tasks` adds sample converter tasks (layout check only).
+- `--render-preview <png> [--settings] [--sessions] [--anti-sleep-picker] [--fan-picker] [--sample-tasks] [--open-session-detail <id>]`: renders the panel offscreen at its natural height, then exits. `--sample-tasks` adds sample converter tasks (layout check only). `--sessions` opens the Sessions page. `--open-session-detail` expands that row's details (`claude:83592`, `cursor:<id>`, `cursor-ended:<id>`, and the same shape for Codex and Antigravity).
 - `--render-battery-icons <dir>`: writes the battery icon styles as PNGs.
 - `--window-diagnose`: prints `accessibility_trusted` and whether the session event tap can be created. Exits.
+- `--stat-diagnose`: prints CPU cluster indexes, load, memory pressure, GPU utilization and the top processes. No network addresses. Exits.
 - `--ai-limits-diagnose`: prints per-provider status, windows and cache age, never tokens. It reads the Keychain secret in-process, so run it only when asked.
 - `--show-popover`: opens the panel at launch (manual testing).
 - `--panel-memory-diagnose [seconds]`: prints physical footprint and CPU time at launch, after the panel's monitors, after 10 open/close cycles and while the panel stays open (default 180 s), then quits. Needs no other MenuTools running.
@@ -101,10 +106,11 @@ Run the bundle binary (`build/MenuTools.app/Contents/MacOS/MenuTools`), never a 
 6. **Launch & Termination**: the panel and its SwiftUI graph are built on first open (keeps idle footprint ~11 MB). SIGTERM (`killall`, logout) is routed to `NSApp.terminate` via a `DispatchSourceSignal`, so `applicationWillTerminate` always restores `pmset disablesleep`; `caffeinate` runs with `-w <our pid>` and dies with the app even on SIGKILL.
 7. **Startup Tasks**: Routine system maintenance fixes (such as ignoring buggy Google Drive FinderSync plugin) execute silently in the background on startup via `appState.systemUtils.autoResetGoogleDriveHelper()`.
 8. **AI Limits** (`Features/AILimits/`): read-only, no extra login. Refreshed on panel open (if older than 2 min) and every 5 min while open.
-   - Claude Code: Keychain service discovered by prefix (`Claude Code…credentials`, may carry a CLAUDE_CONFIG_DIR hash suffix), read via `/usr/bin/security find-generic-password -s <service> -w` (fallback `~/.claude/.credentials.json`) → `GET api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`). Never refresh the token ourselves — Claude Code owns rotation.
+   - Claude Code: Keychain service discovered by prefix (`Claude Code…credentials`, may carry a CLAUDE_CONFIG_DIR hash suffix), read via `/usr/bin/security find-generic-password -s <service> -w` (fallback `~/.claude/.credentials.json`) → `GET api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`). Never refresh the token ourselves — Claude Code owns rotation. Pro/Max use `five_hour` / `seven_day`. Enterprise uses a dollar pool (**Included**) and `extra_usage` / `spend` (**Spend**) from the same response; do not run `claude /usage` (TUI-only).
    - Codex: `~/.codex/auth.json` → `GET chatgpt.com/backend-api/wham/usage`; offline fallback parses `token_count` events in `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`.
    - Antigravity: finds `language_server*` process with `--csrf_token`, ports via `lsof`, RPC `GetUserStatus` / `RetrieveUserQuotaSummary` on self-signed `https://127.0.0.1` (trust accepted for loopback only).
      - IDE closed → `agy` CLI login: Keychain `gemini`/`antigravity` (go-keyring, may be `go-keyring-base64:` prefixed; file fallback `~/.gemini/antigravity-cli/antigravity-oauth-token`) → `POST cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` → `retrieveUserQuotaSummary` (fallback `fetchAvailableModels`). Expired token → run `agy -p /usage --output-format json` (agy refreshes its own token); never refresh or write agy's token ourselves.
+   - Cursor: the `agent` CLI only (`about --format json`). A bundled hook makes that process also read period usage and strip the email from the JSON. No HTTP calls and no session-database reads. **Included** / **Auto** / **API** come from that usage object; **On-demand** only when a spend cap is set. **Run** opens Terminal on `agent login`.
    - All three are undocumented internal APIs — decode every field as optional.
    - "Login expired" rows show a **Run** button: opens Terminal on `claude` / `codex login` / `agy` (temp `.command` file) so the CLI renews its own login.
    - **Cache**: `Application Support/MenuTools/ai-limits-cache.json` keeps the last good windows, plan, fetch time and back-off. A failed fetch keeps those numbers, marked "cached Xh ago", with the reason shown.
@@ -139,18 +145,45 @@ Run the bundle binary (`build/MenuTools.app/Contents/MacOS/MenuTools`), never a 
 - Settings → General: `ShelfEnabled` and `ShelfShowOnDrag`.
 - Details: `docs/knowledge-base/shelf.md`.
 
+## Claude Sessions (`Features/ClaudeSessions/`)
+- Live Claude Code processes only. Each running `claude` writes `~/.claude/sessions/<pid>.json` (or `$CLAUDE_CONFIG_DIR/sessions`). The row shows the chat name, status (`waitingFor`, e.g. "input needed"; **Running** while the main loop is busy or a subagent is unfinished, even if the session file says `idle`), a project chip and uptime. Kind, entrypoint, version, path, pid and session id sit in a details drawer opened from the row's chevron. Only one drawer is open. Click a row to bring its terminal forward. Hidden on the dashboard when none are live.
+- A session file whose pid is gone, or whose executable path has no `claude` directory component, is skipped. `.key` files are never read.
+- The directory watcher and timer stay on after launch: 2 s (0.5 s) while a session file is present or the panel is open, 15 s (4.5 s) otherwise. A session that starts needing input posts a "Claude needs input" notification once per wait. The announced pids are stored in `Application Support/MenuTools/claude-session-watch.json`. Claude has no ended row.
+- Details: `docs/knowledge-base/claude-sessions.md`.
+
+## Cursor Sessions (`Features/CursorSessions/`)
+- Live Cursor agent chats only. Headers live in `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (`composerHeaders`). The row shows the chat name, status (Running, or Input needed / Plan), a project chip and uptime. Mode, the last-edit subtitle, path, file count and composer id sit in the details drawer. Click a row to raise the Cursor window whose title ends with that project (`file — project`).
+- A chat counts as running when `unfinishedRunAt` is set and its checkpoint moved in the last 3 minutes. Approval and plan prompts stay for 30 minutes. Subagents, archived chats and conversation blobs are not read. Nothing is listed when Cursor is not running. Hidden on the dashboard when there are no live or ended rows.
+- A run MenuTools has already seen stays tracked after the panel closes. While Cursor is running the read is every 2 s (0.5 s), otherwise 15 s. When that header's `unfinishedRunAt` clears, MenuTools posts a "Cursor finished" notification (name and project). The row is marked seen when it is on screen: inline on the dashboard when the panel opens, or on the Sessions page when the dashboard is only a summary. A seen row goes grey and keeps a blue Ended label; one you have not seen stays on the blue row until the panel closes. Ended rows stay until dismissed, so two chats that finish together both remain; the same `composerId` going live again drops its Ended row. Quit Cursor does not count as the chat finishing. The first time a live chat is waiting, MenuTools posts "Cursor needs input" once; the id stays in the watch file until that chat is seen not waiting, so a relaunch does not repeat it. The watched ids are stored in `Application Support/MenuTools/cursor-session-watch.json`, so a relaunch mid-task still notices the end.
+- Details: `docs/knowledge-base/cursor-sessions.md`.
+
+## Codex Sessions (`Features/CodexSessions/`)
+- Live `codex` CLI processes only (not ChatGPT.app). The row shows the chat name (thread title when `~/.codex/state_*.sqlite` has one), a project chip and uptime. Path, pid and the thread preview sit in the details drawer. Click a live row to bring its terminal forward; an Ended row raises ChatGPT/Codex when that app is open. Hidden on the dashboard when there are no live or ended rows.
+- The process exiting is the chat ending. MenuTools posts a "Codex finished" notification. Ended rows stay until dismissed. Pids from a previous launch that are already dead are dropped on start. The watched pids are stored in `Application Support/MenuTools/codex-session-watch.json`. Codex has no input-needed state.
+- Details: `docs/knowledge-base/codex-sessions.md`.
+
+## Antigravity Sessions (`Features/AntigravitySessions/`)
+- Live Antigravity conversations only. Summaries live in `~/.gemini/antigravity/conversation_summaries.db`. The row shows the chat name, status (Running, or Input needed), a project chip and uptime. Path, id and preview sit in the details drawer. Click a row to raise the Antigravity window whose title ends with that project.
+- Running / busy / canceling and `not_fully_idle` count as live. Wait / input / approval, and an open `ask_question` form, show as Input needed. Nothing is listed when Antigravity and `agy` are not running. Hidden on the dashboard when there are no live or ended rows.
+- A conversation MenuTools has already seen stays tracked after the panel closes. While Antigravity is running the read is every 2 s (0.5 s), otherwise 15 s. When that summary goes idle, MenuTools posts an "Antigravity finished" notification. The row is marked seen when it is on screen: inline on the dashboard when the panel opens, or on the Sessions page when the dashboard is only a summary. Ended rows stay until dismissed; the same conversation id going live again drops its Ended row. Quit Antigravity does not count as the chat finishing. The first time a live conversation is waiting, MenuTools posts "Antigravity needs input" once; the id stays in the watch file until that conversation is seen not waiting. The watched ids are stored in `Application Support/MenuTools/antigravity-session-watch.json`.
+- Details: `docs/knowledge-base/antigravity-sessions.md`.
+
 ## Performance Rules
-- **Panel-scoped polling**: `AppState.onPopoverWillShow` starts and `onPopoverDidClose` stops System Monitor (2s), Network status (5s), Fan speed (2s; a 5s loop only in curve mode when closed) and AI Limits (5 min).
+- **Panel-scoped polling**: `AppState.onPopoverWillShow` starts and `onPopoverDidClose` stops Network status (5s), Fan speed (2s; a 5s loop only in curve mode when closed), and AI Limits (5 min). System Monitor's 2 s history tick starts at launch and keeps the last 10 minutes of CPU, GPU, memory, temperature and network samples while the panel is closed; opening the panel publishes those numbers on the tiles and does not clear the series. A process walk runs only while the CPU or Memory detail page is open. GPU client times are read only while the GPU page is open.
+- **Session watch**: Claude, Cursor, Codex, and Antigravity stay on after launch. 2 s (0.5 s) while that app is live or the panel is open, 15 s (4.5 s) otherwise. Timers run on the common run-loop mode, and an activity keeps App Nap from deferring them until the panel opens. Claude uses "a session file is present" instead of a process name. A chat MenuTools has seen running posts a notification when it finishes. Cursor, Antigravity, and Claude also post once when a chat starts needing input.
+- **Menu bar ring**: the status item is a three-segment ring (`AppState.sessionMarks`) while `AppDelegate.sessionRingEnabled` is true. Top turns orange while any session needs input and stays until it does not. Lower right turns green while any session is running. Lower left turns blue for an unseen ended row and clears when that row is on screen. Rows listed on the dashboard count as soon as the panel opens. The Sessions summary does not: the segment and the blue row stay until the Sessions page is opened. Seeing the row turns already-seen ended rows grey (the Ended label stays blue) and leaves the new one on the blue row until the panel closes. Each session refresh posts `sessionMenuMarksChanged` after the rows are stored and paints the ring as a bitmap (the same path as the old alert dot), so a segment appears while the panel stays closed. Quiet segments stay the menu bar color. The battery and symbol icons remain in `updateLegacyStatusItemIcon`; set the flag to false to restore them. The Settings icon picker still changes the panel header only.
 - **Always-on watchers**: Clipboard `changeCount` check (1s), the Window Manager event tap (when Accessibility is granted), the Shelf drag monitor (when enabled), and Universal Control file watcher (when auto-enable is on). Battery is event-driven (power-source notifications, 0.5s coalescing) and never polled. The iMessage tap exists only while Messages is frontmost.
 - **Timers** set an explicit tolerance with `Timer.publish(every:tolerance:)` or `timer.tolerance`, so the system can coalesce wakeups.
 - **Publish only on change**: assign published values only when they differ, so idle ticks never re-render SwiftUI.
 - **Event taps stay cheap**: the callback does a window-bounds pre-check, then the Accessibility hit test on a background queue. `mouseUp` is handled only after a consumed zoom click.
-- **Observation scope**: each dashboard section observes only its own manager. `PopoverContentView` observes nothing.
+- **Observation scope**: each dashboard section observes only its own manager. `DashboardSessionsSection` observes the four session managers. `PopoverContentView` observes nothing.
 - **Memory**: measure with `vmmap --summary <pid>` (Physical footprint), not `ps` RSS alone, because RSS includes shared framework pages. Baseline and history: `docs/knowledge-base/performance.md`.
 
 ## Dashboard Layout (no scroll)
 - Panel width 360pt. Height is the natural content height reported by SwiftUI (`PanelHeightKey`). The top edge stays under the status item, and the height is capped at the screen's visible height.
-- The dashboard and Settings never scroll. Settings is split into segmented pages: General, Windows, Messages, Network.
-- Order: header (app icon, title, Eject disks, Empty Trash, Settings) → metrics (CPU, RAM, TEMP/FAN, NET, BAT; LAN/WAN copy chips) → AI Limits → quick toggles (Awake, Low Power, VPN, SpoofDPI) → converter (last 4 tasks, then "+N more") → shelf → clipboard (3 rows, ⌥⌘V).
-- Per-manager subviews: `MetricsCard` watches System Monitor, `FanTile` watches Fan Control, `BatteryTile` watches Battery, `AILimitsCard` watches AI Limits, `ConverterCard` watches the converter, `ShelfSection` watches Shelf, `ClipboardCard` watches Clipboard.
+- The dashboard, stat detail page and Settings never scroll. The Sessions page pins a filter (All, Claude, Cursor, Codex, Antigravity; a provider with no rows is left off) and scrolls the list once it would make the panel taller than the screen. Settings is split into segmented pages: General, Windows, Messages, Network. Opening and closing Settings crossfades (`SessionDashboardLayout.pageAnimation`). The four pages are built with Settings and stay mounted; a tab click only changes which page is visible. The settings well stays at the tallest page, so a tab click does not resize the panel.
+- CPU, GPU, RAM, TEMP, NET, BAT, DISK and FAN open a detail page. **X** returns, same as Sessions. FAN is the fan control on that page. The fan tile is one column and the disk tile is the other two. LAN and WAN still copy. Detail fields: `docs/knowledge-base/system-stats.md`.
+- Session cards with no live or ended rows are omitted. If live+ended rows across all providers exceed 3 (`SessionDashboardLayout.maxInlineRows`), the dashboard shows one **Sessions** summary (counts). Click it for a Sessions page with the full lists; **X** returns like Settings. The pages crossfade. The panel's top edge does not move; only its height changes.
+- Order: header (app icon, title, Eject disks, Empty Trash, Settings) → metrics (CPU, GPU, RAM, TEMP, NET, BAT, FAN, DISK; LAN/WAN copy chips) → AI Limits → session cards or Sessions summary → quick toggles (Awake, Low Power, VPN, SpoofDPI) → converter (last 4 tasks, then "+N more") → shelf → clipboard (3 rows, ⌥⌘V).
+- Per-manager subviews: `MetricsCard` watches System Monitor, `FanTile` watches Fan Control, `BatteryTile` watches Battery, `AILimitsCard` watches AI Limits, `DashboardSessionsSection` watches the four session managers, `ConverterCard` watches the converter, `ShelfSection` watches Shelf, `ClipboardCard` watches Clipboard.
 - Keep labels short (see rule 5).

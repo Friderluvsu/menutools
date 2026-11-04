@@ -106,6 +106,31 @@ enum StatusItemDisplayMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Counts behind the menu bar ring. Idle sessions are left out.
+struct SessionMenuMarks: Equatable {
+    var inputCount = 0
+    var runningCount = 0
+    var endedCount = 0
+
+    var needsInput: Bool { inputCount > 0 }
+    var running: Bool { runningCount > 0 }
+    var endedUnseen: Bool { endedCount > 0 }
+    var isQuiet: Bool { inputCount == 0 && runningCount == 0 && endedCount == 0 }
+
+    var tooltip: String {
+        var parts: [String] = []
+        if inputCount > 0 { parts.append("\(inputCount) need input") }
+        if runningCount > 0 { parts.append("\(runningCount) running") }
+        if endedCount > 0 { parts.append("\(endedCount) ended") }
+        return parts.joined(separator: ", ")
+    }
+}
+
+extension Notification.Name {
+    /// Posted after a session refresh has stored its rows. The menu bar ring paints from this, with the panel closed.
+    static let sessionMenuMarksChanged = Notification.Name("MenuToolsSessionMenuMarksChanged")
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var selectedTab: UnifiedTab = .components
@@ -133,12 +158,20 @@ final class AppState: ObservableObject {
     let windowManager = WindowManager()
     let universalControl = UniversalControlManager()
     let aiLimits: AILimitsManager
+    let claudeSessions: ClaudeSessionsManager
+    let cursorSessions: CursorSessionsManager
+    let codexSessions: CodexSessionsManager
+    let antigravitySessions: AntigravitySessionsManager
 
     private var cancellables = Set<AnyCancellable>()
 
     init(previewMode: Bool = false) {
         converter = MediaConverterManager(requestNotifications: !previewMode)
         aiLimits = AILimitsManager(previewMode: previewMode)
+        claudeSessions = ClaudeSessionsManager(previewMode: previewMode)
+        cursorSessions = CursorSessionsManager(previewMode: previewMode)
+        codexSessions = CodexSessionsManager(previewMode: previewMode)
+        antigravitySessions = AntigravitySessionsManager(previewMode: previewMode)
         if let modeRaw = UserDefaults.standard.string(forKey: "StatusDisplayMode"),
             let mode = StatusItemDisplayMode(rawValue: modeRaw)
         {
@@ -152,9 +185,13 @@ final class AppState: ObservableObject {
                 self.menuBarIconStyle = .batteryBar
             } else if iconRaw == "Battery Bar + %" {
                 self.menuBarIconStyle = .batteryBarPercentage
-            } else if iconRaw == "Battery Bar + Charge" || iconRaw == "Battery Bar + Charge (Native macOS)" || iconRaw == "Battery Bar + Charge (No %)" {
+            } else if iconRaw == "Battery Bar + Charge" || iconRaw == "Battery Bar + Charge (Native macOS)"
+                || iconRaw == "Battery Bar + Charge (No %)"
+            {
                 self.menuBarIconStyle = .batteryBarCharge
-            } else if iconRaw == "Battery Charge" || iconRaw == "Battery Charge (No %)" || iconRaw == "Battery Level" || iconRaw == "Battery (No %)" {
+            } else if iconRaw == "Battery Charge" || iconRaw == "Battery Charge (No %)" || iconRaw == "Battery Level"
+                || iconRaw == "Battery (No %)"
+            {
                 self.menuBarIconStyle = .batteryCharge
             } else if iconRaw == "Battery Bar (Golden Gate)" || iconRaw == "Golden Gate" {
                 self.menuBarIconStyle = .batteryBarGoldenGate
@@ -182,9 +219,18 @@ final class AppState: ObservableObject {
         network.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         battery.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         windowManager.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        universalControl.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        universalControl.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(
+            in: &cancellables)
+        claudeSessions.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        cursorSessions.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        codexSessions.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        antigravitySessions.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(
+            in: &cancellables)
 
         ClipboardHUDWindowController.shared.setup(clipboardManager: clipboard)
+        if !previewMode {
+            systemMonitor.startHistorySampling()
+        }
     }
 
     func setStatusDisplayMode(_ mode: StatusItemDisplayMode) {
@@ -214,6 +260,60 @@ final class AppState: ObservableObject {
         }
     }
 
+    var hasSessionAlert: Bool {
+        cursorSessions.hasUnseenEnded || codexSessions.hasUnseenEnded || antigravitySessions.hasUnseenEnded
+    }
+
+    /// True while the Sessions page is the page on screen. The dashboard summary is not.
+    var sessionsPageVisible = false
+
+    /// Live + ended rows across the four providers. Above this, the dashboard shows a summary.
+    var sessionRowCount: Int {
+        claudeSessions.sessions.count + cursorSessions.sessions.count + cursorSessions.ended.count
+            + codexSessions.sessions.count + codexSessions.ended.count + antigravitySessions.sessions.count
+            + antigravitySessions.ended.count
+    }
+
+    /// Ended rows are actually listed: inline on the dashboard, or on the Sessions page.
+    var endedRowsAreVisible: Bool {
+        sessionsPageVisible || sessionRowCount <= SessionDashboardLayout.maxInlineRows
+    }
+
+    /// Clear the menu-bar blue for ended rows the user can see. The blue row lasts until the panel closes.
+    func acknowledgeEndedSessions() {
+        cursorSessions.acknowledgeEnded()
+        codexSessions.acknowledgeEnded()
+        antigravitySessions.acknowledgeEnded()
+    }
+
+    /// Menu bar ring. A session that is waiting counts as input, not also as running.
+    var sessionMarks: SessionMenuMarks {
+        var marks = SessionMenuMarks()
+        func add(needsInput: Bool, isRunning: Bool) {
+            if needsInput {
+                marks.inputCount += 1
+            } else if isRunning {
+                marks.runningCount += 1
+            }
+        }
+        for session in claudeSessions.sessions {
+            add(needsInput: session.needsInput, isRunning: session.isWorking)
+        }
+        for session in cursorSessions.sessions {
+            add(needsInput: session.needsInput, isRunning: session.status == "running")
+        }
+        for _ in codexSessions.sessions {
+            add(needsInput: false, isRunning: true)
+        }
+        for session in antigravitySessions.sessions {
+            add(needsInput: session.needsInput, isRunning: session.status == "running")
+        }
+        marks.endedCount =
+            cursorSessions.ended.filter { !$0.seen }.count + codexSessions.ended.filter { !$0.seen }.count
+            + antigravitySessions.ended.filter { !$0.seen }.count
+        return marks
+    }
+
     var menuBarTitle: String {
         switch statusDisplayMode {
         case .iconOnly:
@@ -237,12 +337,22 @@ final class AppState: ObservableObject {
         battery.refreshBatteryState()
         windowManager.refreshPermissions()
         aiLimits.startMonitoring()
+        claudeSessions.startMonitoring()
+        cursorSessions.startMonitoring()
+        codexSessions.startMonitoring()
+        antigravitySessions.startMonitoring()
+        // A Sessions summary hides the rows, so opening the panel is not the same as seeing them.
+        if endedRowsAreVisible { acknowledgeEndedSessions() }
     }
 
     func onPopoverDidClose() {
         systemMonitor.stopMonitoring()
         network.stopPolling()
         aiLimits.stopMonitoring()
+        claudeSessions.stopMonitoring()
+        cursorSessions.stopMonitoring()
+        codexSessions.stopMonitoring()
+        antigravitySessions.stopMonitoring()
         // Curve mode keeps a slow 5s loop; other modes stop polling.
         fanControl.enterBackground()
     }

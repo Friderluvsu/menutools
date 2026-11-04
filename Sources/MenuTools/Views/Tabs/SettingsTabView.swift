@@ -11,19 +11,20 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private struct SettingsSectionHeightKey: PreferenceKey {
+    static var defaultValue: [SettingsSection: CGFloat] = [:]
+
+    static func reduce(value: inout [SettingsSection: CGFloat], nextValue: () -> [SettingsSection: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { max($0, $1) })
+    }
+}
+
 struct SettingsTabView: View {
     @ObservedObject var appState: AppState
-    /// Not forwarded through AppState, so observed directly for live status rows.
-    @ObservedObject private var iMessage: IMessageHelper
-    @ObservedObject private var shelf = ShelfManager.shared
-    @State private var isAddingCustomException: Bool = false
-    @State private var customBundleId: String = ""
     @AppStorage("SettingsSection") private var section: SettingsSection = .general
-
-    init(appState: AppState) {
-        self.appState = appState
-        _iMessage = ObservedObject(wrappedValue: appState.iMessage)
-    }
+    @State private var isAddingCustomException = false
+    @State private var customBundleId = ""
+    @State private var sectionHeights: [SettingsSection: CGFloat] = [:]
 
     var body: some View {
         VStack(spacing: MacToolsTheme.sectionSpacing) {
@@ -36,7 +37,76 @@ struct SettingsTabView: View {
             .labelsHidden()
             .padding(.bottom, 2)
 
-            switch section {
+            // All four pages are built with Settings. A tab click only changes which
+            // one is visible, and the well stays at the tallest page so the panel
+            // window is not resized.
+            ZStack(alignment: .top) {
+                ForEach(SettingsSection.allCases) { page in
+                    SettingsSectionPage(
+                        page: page,
+                        appState: appState,
+                        isAddingCustomException: $isAddingCustomException,
+                        customBundleId: $customBundleId
+                    )
+                    .opacity(page == section ? 1 : 0)
+                    .allowsHitTesting(page == section)
+                    .accessibilityHidden(page != section)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+            .frame(height: lockedContentHeight, alignment: .top)
+            .animation(nil, value: section)
+            .clipped()
+        }
+        .frame(maxWidth: .infinity)
+        .onPreferenceChange(SettingsSectionHeightKey.self) { heights in
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                for (page, height) in heights where height > 1 {
+                    sectionHeights[page] = height
+                }
+            }
+        }
+        .onAppear {
+            appState.iMessage.refreshPermissions()
+            appState.windowManager.refreshPermissions()
+        }
+    }
+
+    /// Tallest measured page. Tab switches must not change this, or the window relayouts.
+    private var lockedContentHeight: CGFloat? {
+        sectionHeights.values.filter { $0 > 1 }.max()
+    }
+}
+
+/// One settings page. Its inputs do not include the selected tab, so a tab click
+/// does not rebuild its cards.
+private struct SettingsSectionPage: View {
+    let page: SettingsSection
+    @ObservedObject var appState: AppState
+    @ObservedObject private var iMessage: IMessageHelper
+    @ObservedObject private var shelf = ShelfManager.shared
+    @Binding var isAddingCustomException: Bool
+    @Binding var customBundleId: String
+
+    init(
+        page: SettingsSection,
+        appState: AppState,
+        isAddingCustomException: Binding<Bool>,
+        customBundleId: Binding<String>
+    ) {
+        self.page = page
+        self.appState = appState
+        _iMessage = ObservedObject(wrappedValue: appState.iMessage)
+        _isAddingCustomException = isAddingCustomException
+        _customBundleId = customBundleId
+    }
+
+    var body: some View {
+        VStack(spacing: MacToolsTheme.sectionSpacing) {
+            switch page {
             case .general:
                 generalCard
                 shelfCard
@@ -53,11 +123,13 @@ struct SettingsTabView: View {
                 requirementsCard
             }
         }
-        .frame(maxWidth: .infinity)
-        .onAppear {
-            appState.iMessage.refreshPermissions()
-            appState.windowManager.refreshPermissions()
-        }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: SettingsSectionHeightKey.self, value: [page: proxy.size.height])
+            }
+        )
     }
 
     // MARK: - Permissions

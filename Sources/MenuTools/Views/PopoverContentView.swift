@@ -10,21 +10,49 @@ struct PopoverContentView: View {
     @State private var copiedNotice: String?
     @State private var toastToken = 0
     @State private var showSettings: Bool
+    @State private var showSessions: Bool
+    /// Visual fade only. Kept separate from layout so the panel height does not slide.
+    @State private var sessionsOpacity: Double = 0
+    @State private var settingsOpacity: Double = 0
+    @State private var statTopic: StatTopic?
+    @State private var showStat: Bool
+    @State private var statOpacity: Double = 0
     @State private var showAntiSleepPicker: Bool
-    @State private var showFanControlPicker: Bool
+    @State private var visibleHeight: CGFloat = 0
+    @State private var dashboardHeight: CGFloat = 0
+    @State private var sessionsHeight: CGFloat = 0
+    @State private var statHeights: [String: CGFloat] = [:]
+    @State private var settingsHeight: CGFloat = 0
+    @State private var pageHeight: CGFloat = 0
+    @State private var sessionsMounted = false
+    @State private var settingsMounted = false
+    @State private var statMounted = false
+    @State private var settingsFadeToken = 0
+    @StateObject private var sessionDetails: SessionDetailSelection
 
     init(
         appState: AppState,
         showSettings: Bool = false,
+        showSessions: Bool = false,
+        showStat: StatTopic? = nil,
         showAntiSleepPicker: Bool = false,
-        showFanControlPicker: Bool = false,
+        openSessionDetail: String? = nil,
         onHeightChange: (@MainActor (CGFloat) -> Void)? = nil
     ) {
         self.appState = appState
         self.onHeightChange = onHeightChange
+        _sessionDetails = StateObject(wrappedValue: SessionDetailSelection(openID: openSessionDetail))
         _showSettings = State(initialValue: showSettings)
+        _showSessions = State(initialValue: showSessions)
+        _sessionsMounted = State(initialValue: showSessions)
+        _sessionsOpacity = State(initialValue: showSessions ? 1 : 0)
+        _settingsMounted = State(initialValue: showSettings)
+        _settingsOpacity = State(initialValue: showSettings ? 1 : 0)
+        _statTopic = State(initialValue: showStat)
+        _showStat = State(initialValue: showStat != nil)
+        _statMounted = State(initialValue: showStat != nil)
+        _statOpacity = State(initialValue: showStat != nil ? 1 : 0)
         _showAntiSleepPicker = State(initialValue: showAntiSleepPicker)
-        _showFanControlPicker = State(initialValue: showFanControlPicker)
     }
 
     var body: some View {
@@ -33,26 +61,18 @@ struct PopoverContentView: View {
                 appState: appState,
                 systemUtils: appState.systemUtils,
                 isSettings: showSettings,
-                toggleSettings: {
-                    showSettings.toggle()
-                    if showSettings { appState.iMessage.refreshPermissions() }
-                }
+                isSessions: showSessions && !showSettings && !showStat,
+                statTitle: showStat ? statTopic?.title : nil,
+                onTrailing: handleHeaderTrailing
             )
+            .animation(nil, value: showSessions)
+            .animation(nil, value: showSettings)
+            .animation(nil, value: showStat)
             Divider().opacity(0.35)
 
-            if showSettings {
-                SettingsTabView(appState: appState)
-                    .padding(MacToolsTheme.outerPadding)
-            } else {
-                DashboardView(
-                    appState: appState,
-                    toast: showToast,
-                    openAntiSleepPicker: { showAntiSleepPicker = true },
-                    openFanPicker: { showFanControlPicker = true }
-                )
-                .padding(MacToolsTheme.outerPadding)
-            }
+            settingsCrossfade
         }
+        .environmentObject(sessionDetails)
         .fixedSize(horizontal: false, vertical: true)
         .reportsPanelHeight()
         .frame(width: MacToolsTheme.popoverWidth)
@@ -73,9 +93,6 @@ struct PopoverContentView: View {
             if showAntiSleepPicker {
                 AntiSleepPickerOverlay(antiSleep: appState.antiSleep) { showAntiSleepPicker = false }
             }
-            if showFanControlPicker {
-                FanControlPickerView(fanControl: appState.fanControl) { showFanControlPicker = false }
-            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
@@ -85,6 +102,269 @@ struct PopoverContentView: View {
         .onPreferenceChange(PanelHeightKey.self) { height in
             MainActor.assumeIsolated { onHeightChange?(height) }
         }
+        .onAppear {
+            if showSessions {
+                sessionsMounted = true
+                sessionsOpacity = 1
+            }
+            if showSettings {
+                settingsMounted = true
+                settingsOpacity = 1
+            }
+            noteSessionsPageVisible()
+        }
+        .onPreferenceChange(SessionPageHeightKey.self) { values in
+            MainActor.assumeIsolated { applyMeasuredHeights(values) }
+        }
+        .onChange(of: dashboardHeight) { _, height in
+            guard !showSessions, !showSettings, !showStat else { return }
+            setVisibleHeight(height)
+        }
+        .onChange(of: sessionsHeight) { _, height in
+            guard showSessions, !showSettings, !showStat else { return }
+            setVisibleHeight(height)
+        }
+        .onChange(of: settingsHeight) { _, height in
+            guard showSettings else { return }
+            setPageHeight(height)
+        }
+    }
+
+    /// Settings sits on top of the dashboard fade. Height is committed before the opacity changes.
+    private var settingsCrossfade: some View {
+        ZStack(alignment: .top) {
+            sessionCrossfade
+                .opacity(1 - settingsOpacity)
+                .allowsHitTesting(!showSettings)
+
+            if settingsMounted {
+                SettingsTabView(appState: appState)
+                    .padding(MacToolsTheme.outerPadding)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .reportsSessionPageHeight("settings")
+                    .opacity(settingsOpacity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(showSettings)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(height: pageHeight > 1 ? pageHeight : nil, alignment: .top)
+        .animation(nil, value: pageHeight)
+        .clipped()
+    }
+
+    private var sessionCrossfade: some View {
+        ZStack(alignment: .top) {
+            DashboardView(
+                appState: appState,
+                toast: showToast,
+                openAntiSleepPicker: { showAntiSleepPicker = true },
+                openFanPicker: { openStat(.fan) },
+                openSessions: openSessions,
+                openStat: openStat
+            )
+            .padding(MacToolsTheme.outerPadding)
+            .fixedSize(horizontal: false, vertical: true)
+            .reportsSessionPageHeight("dashboard")
+            .opacity(1 - max(sessionsOpacity, statOpacity))
+            .animation(SessionDashboardLayout.pageAnimation, value: sessionsOpacity)
+            .animation(SessionDashboardLayout.pageAnimation, value: statOpacity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(!showSessions && !showStat)
+
+            if sessionsMounted {
+                SessionsPage(
+                    claude: appState.claudeSessions,
+                    cursor: appState.cursorSessions,
+                    codex: appState.codexSessions,
+                    antigravity: appState.antigravitySessions,
+                    stackRevealed: true,
+                    onEmpty: closeSessions
+                )
+                .padding(MacToolsTheme.outerPadding)
+                .fixedSize(horizontal: false, vertical: true)
+                .reportsSessionPageHeight("sessions")
+                .opacity(sessionsOpacity)
+                .animation(SessionDashboardLayout.pageAnimation, value: sessionsOpacity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(showSessions && !showStat)
+            }
+
+            if statMounted, let statTopic {
+                StatDetailPage(
+                    topic: statTopic,
+                    details: appState.systemMonitor.details,
+                    fan: appState.fanControl,
+                    battery: appState.battery
+                )
+                .padding(MacToolsTheme.outerPadding)
+                .fixedSize(horizontal: false, vertical: true)
+                .reportsSessionPageHeight("stat")
+                .opacity(statOpacity)
+                .animation(SessionDashboardLayout.pageAnimation, value: statOpacity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(showStat)
+                .id(statTopic)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(height: visibleHeight > 1 ? visibleHeight : nil, alignment: .top)
+        .animation(nil, value: visibleHeight)
+        .clipped()
+    }
+
+    private func applyMeasuredHeights(_ values: [String: CGFloat]) {
+        if let height = values["dashboard"], height > 1 { dashboardHeight = height }
+        if let height = values["sessions"], height > 1 { sessionsHeight = height }
+        if let height = values["stat"], height > 1, let topic = statTopic?.rawValue {
+            statHeights[topic] = height
+            if showStat, !showSettings { setVisibleHeight(height) }
+        }
+        if let height = values["settings"], height > 1 { settingsHeight = height }
+        if visibleHeight < 1, !showSettings {
+            let initial: CGFloat
+            if showStat, let topic = statTopic?.rawValue, let height = statHeights[topic], height > 1 {
+                initial = height
+            } else if showSessions, sessionsHeight > 1 {
+                initial = sessionsHeight
+            } else {
+                initial = dashboardHeight
+            }
+            setVisibleHeight(initial)
+        }
+        if pageHeight < 1 {
+            setPageHeight(
+                showSettings
+                    ? (settingsHeight > 1 ? settingsHeight : dashboardHeight)
+                    : (visibleHeight > 1 ? visibleHeight : dashboardHeight))
+        }
+    }
+
+    /// Height changes resize the window from its top edge. Animating this frame as well
+    /// makes the dashboard look like it is sliding up from the bottom.
+    private func setVisibleHeight(_ height: CGFloat) {
+        guard height > 1, abs(height - visibleHeight) > 0.5 else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { visibleHeight = height }
+        if !showSettings { setPageHeight(height) }
+    }
+
+    private func setPageHeight(_ height: CGFloat) {
+        guard height > 1, abs(height - pageHeight) > 0.5 else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { pageHeight = height }
+    }
+
+    private func handleHeaderTrailing() {
+        resignHeaderFocus()
+        if showSettings {
+            setSettings(false)
+        } else if showStat {
+            closeStat()
+        } else if showSessions {
+            closeSessions()
+        } else {
+            setSettings(true)
+            appState.iMessage.refreshPermissions()
+        }
+    }
+
+    private func setSettings(_ show: Bool) {
+        settingsFadeToken += 1
+        let token = settingsFadeToken
+        if show {
+            settingsMounted = true
+            if settingsHeight > 1 { setPageHeight(settingsHeight) }
+        } else {
+            let cached = statTopic.flatMap { statHeights[$0.rawValue] } ?? 0
+            let back = showStat && cached > 1 ? cached : (showSessions ? sessionsHeight : dashboardHeight)
+            if back > 1 {
+                setPageHeight(back)
+                setVisibleHeight(back)
+            }
+        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { showSettings = show }
+        noteSessionsPageVisible()
+        DispatchQueue.main.async {
+            guard token == settingsFadeToken else { return }
+            withAnimation(SessionDashboardLayout.pageAnimation) {
+                settingsOpacity = show ? 1 : 0
+            }
+        }
+    }
+
+    /// The Sessions page is showing, so its ended rows count as seen. The dashboard summary does not.
+    private func noteSessionsPageVisible() {
+        let visible = showSessions && !showSettings && !showStat
+        let becameVisible = visible && !appState.sessionsPageVisible
+        appState.sessionsPageVisible = visible
+        if becameVisible { appState.acknowledgeEndedSessions() }
+    }
+
+    private func openSessions() {
+        resignHeaderFocus()
+        sessionsMounted = true
+        if sessionsHeight > 1 { setVisibleHeight(sessionsHeight) }
+        var layout = Transaction()
+        layout.disablesAnimations = true
+        withTransaction(layout) { showSessions = true }
+        noteSessionsPageVisible()
+        // Fade after the height has been committed, so the crossfade cannot move the panel.
+        DispatchQueue.main.async {
+            withAnimation(SessionDashboardLayout.pageAnimation) { sessionsOpacity = 1 }
+        }
+    }
+
+    private func closeSessions() {
+        resignHeaderFocus()
+        if dashboardHeight > 1 { setVisibleHeight(dashboardHeight) }
+        var layout = Transaction()
+        layout.disablesAnimations = true
+        withTransaction(layout) { showSessions = false }
+        noteSessionsPageVisible()
+        DispatchQueue.main.async {
+            withAnimation(SessionDashboardLayout.pageAnimation) { sessionsOpacity = 0 }
+        }
+    }
+
+    private func openStat(_ topic: StatTopic) {
+        resignHeaderFocus()
+        statTopic = topic
+        statMounted = true
+        appState.systemMonitor.setStatFocus(topic)
+        if let height = statHeights[topic.rawValue], height > 1 { setVisibleHeight(height) }
+        var layout = Transaction()
+        layout.disablesAnimations = true
+        withTransaction(layout) { showStat = true }
+        noteSessionsPageVisible()
+        DispatchQueue.main.async {
+            withAnimation(SessionDashboardLayout.pageAnimation) { statOpacity = 1 }
+        }
+    }
+
+    private func closeStat() {
+        resignHeaderFocus()
+        appState.systemMonitor.setStatFocus(nil)
+        if dashboardHeight > 1 { setVisibleHeight(dashboardHeight) }
+        var layout = Transaction()
+        layout.disablesAnimations = true
+        withTransaction(layout) { showStat = false }
+        noteSessionsPageVisible()
+        DispatchQueue.main.async {
+            withAnimation(SessionDashboardLayout.pageAnimation) { statOpacity = 0 }
+        }
+        // Drop the page after the fade so its 2 s snapshot updates do not keep rendering.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            if !showStat { statMounted = false }
+        }
+    }
+
+    private func resignHeaderFocus() {
+        NSApp.keyWindow?.makeFirstResponder(nil)
     }
 
     private func showToast(_ text: String) {
@@ -105,7 +385,11 @@ private struct PanelHeader: View {
     @ObservedObject var appState: AppState
     @ObservedObject var systemUtils: SystemUtilsManager
     let isSettings: Bool
-    let toggleSettings: () -> Void
+    let isSessions: Bool
+    var statTitle: String?
+    let onTrailing: () -> Void
+
+    private var showsBack: Bool { isSettings || isSessions || statTitle != nil }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -115,24 +399,37 @@ private struct PanelHeader: View {
                 .frame(width: 22, height: 22)
                 .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
 
-            Text(isSettings ? "Settings" : "MenuTools")
+            Text(title)
                 .font(.system(size: 12, weight: .semibold))
 
             Spacer(minLength: 6)
 
-            if !isSettings {
-                if systemUtils.isActionRunning {
-                    ProgressView().controlSize(.mini)
+            if !showsBack {
+                Group {
+                    if systemUtils.isActionRunning {
+                        ProgressView().controlSize(.mini)
+                    }
+                    HeaderIconButton(symbol: "eject", help: "Eject disks") { systemUtils.ejectAllDisks() }
+                    HeaderIconButton(symbol: "trash", help: "Empty Trash") { systemUtils.emptyTrash() }
                 }
-                HeaderIconButton(symbol: "eject", help: "Eject disks") { systemUtils.ejectAllDisks() }
-                HeaderIconButton(symbol: "trash", help: "Empty Trash") { systemUtils.emptyTrash() }
+                .transition(.opacity)
             }
-            HeaderIconButton(symbol: isSettings ? "xmark" : "gearshape", help: isSettings ? "Back" : "Settings") {
-                toggleSettings()
-            }
+            HeaderIconButton(
+                symbol: showsBack ? "xmark" : "gearshape",
+                help: showsBack ? "Back" : "Settings",
+                action: onTrailing
+            )
+            .id(showsBack ? "back" : "settings")
         }
         .padding(.horizontal, MacToolsTheme.outerPadding + 2)
         .frame(height: 34)
+    }
+
+    private var title: String {
+        if isSettings { return "Settings" }
+        if let statTitle { return statTitle }
+        if isSessions { return "Sessions" }
+        return "MenuTools"
     }
 }
 
@@ -152,6 +449,7 @@ private struct HeaderIconButton: View {
                 .hoverHighlight(cornerRadius: 6)
         }
         .buttonStyle(.plain)
+        .suppressesFocusRing()
         .help(help)
     }
 }
@@ -163,6 +461,8 @@ private struct DashboardView: View {
     let toast: (String) -> Void
     let openAntiSleepPicker: () -> Void
     let openFanPicker: () -> Void
+    let openSessions: () -> Void
+    let openStat: (StatTopic) -> Void
 
     var body: some View {
         VStack(spacing: MacToolsTheme.sectionSpacing) {
@@ -171,9 +471,17 @@ private struct DashboardView: View {
                 fanControl: appState.fanControl,
                 battery: appState.battery,
                 openFanPicker: openFanPicker,
+                openStat: openStat,
                 toast: toast
             )
             AILimitsCard(manager: appState.aiLimits)
+            DashboardSessionsSection(
+                claude: appState.claudeSessions,
+                cursor: appState.cursorSessions,
+                codex: appState.codexSessions,
+                antigravity: appState.antigravitySessions,
+                openSessions: openSessions
+            )
             HStack(spacing: MacToolsTheme.sectionSpacing) {
                 AntiSleepToggle(antiSleep: appState.antiSleep, openPicker: openAntiSleepPicker)
                 LowPowerToggle(battery: appState.battery)
@@ -195,32 +503,79 @@ private struct MetricsCard: View {
     let fanControl: FanControlManager
     let battery: BatteryManager
     let openFanPicker: () -> Void
+    let openStat: (StatTopic) -> Void
     let toast: (String) -> Void
 
     var body: some View {
         MacToolsCard(padding: 6) {
             VStack(spacing: 4) {
                 HStack(spacing: 4) {
-                    MetricTile(title: "CPU", value: "\(Int(monitor.cpuUsage.rounded()))%")
-                    MetricTile(
+                    MetricButton(title: "CPU", value: "\(Int(monitor.cpuUsage.rounded()))%", help: "CPU details") {
+                        openStat(.cpu)
+                    }
+                    MetricButton(title: "GPU", value: gpuText, help: "GPU details") { openStat(.gpu) }
+                    MetricButton(
                         title: "RAM", value: String(format: "%.1fG", monitor.memoryUsedGB),
-                        help: String(format: "%.1f of %.0f GB", monitor.memoryUsedGB, monitor.memoryTotalGB))
-                    MetricTile(title: "TEMP", value: "\(Int(monitor.cpuTemperature.rounded()))°C")
+                        help: String(format: "%.1f of %.0f GB", monitor.memoryUsedGB, monitor.memoryTotalGB)
+                    ) { openStat(.memory) }
                 }
                 HStack(spacing: 4) {
-                    FanTile(fanControl: fanControl, action: openFanPicker)
-                    MetricTile(
+                    MetricButton(
+                        title: "TEMP", value: "\(Int(monitor.cpuTemperature.rounded()))°C", help: "Temperature"
+                    ) { openStat(.temperature) }
+                    MetricButton(
                         title: "NET",
                         value: "↓\(Self.speed(monitor.downloadSpeedKBps)) ↑\(Self.speed(monitor.uploadSpeedKBps))",
-                        help: "Down \(Self.speed(monitor.downloadSpeedKBps))B/s · Up \(Self.speed(monitor.uploadSpeedKBps))B/s")
-                    BatteryTile(battery: battery)
+                        help:
+                            "Down \(Self.speed(monitor.downloadSpeedKBps))B/s · Up \(Self.speed(monitor.uploadSpeedKBps))B/s"
+                    ) { openStat(.network) }
+                    BatteryMetricButton(battery: battery) { openStat(.battery) }
                 }
+                diskRow
                 HStack(spacing: 4) {
                     IPButton(label: "LAN", value: monitor.localIP) { copy(monitor.localIP, "LAN copied") }
                     IPButton(label: "WAN", value: monitor.publicIP) { copy(monitor.publicIP, "WAN copied") }
                 }
             }
         }
+    }
+
+    private var gpuText: String {
+        guard let usage = monitor.gpuUsage else { return "—" }
+        return "\(Int(usage.rounded()))%"
+    }
+
+    /// Fan keeps one column. Disk uses the other two so the free-space figure fits.
+    private var diskRow: some View {
+        GeometryReader { proxy in
+            let gap: CGFloat = 4
+            let third = max(0, (proxy.size.width - gap) / 3)
+            HStack(spacing: gap) {
+                FanTile(fanControl: fanControl, action: openFanPicker)
+                    .frame(width: third)
+                MetricButton(title: "DISK", value: diskText, help: diskHelp, tint: diskTint) {
+                    openStat(.disk)
+                }
+                .frame(width: third * 2)
+            }
+        }
+        .frame(height: 24)
+    }
+
+    private var diskText: String {
+        guard let percent = monitor.diskUsedPercent else { return "—" }
+        return "\(Int(percent.rounded()))% · \(StatFormat.bytes(monitor.diskFreeBytes)) free"
+    }
+
+    private var diskHelp: String {
+        guard monitor.diskUsedPercent != nil, monitor.diskTotalBytes > 0 else { return "Disk" }
+        let name = monitor.diskName.isEmpty ? "Disk" : monitor.diskName
+        let used = monitor.diskTotalBytes > monitor.diskFreeBytes ? monitor.diskTotalBytes - monitor.diskFreeBytes : 0
+        return "\(name) · \(StatFormat.bytes(used)) of \(StatFormat.bytes(monitor.diskTotalBytes))"
+    }
+
+    private var diskTint: Color? {
+        (monitor.diskUsedPercent ?? 0) >= 90 ? .orange : nil
     }
 
     private func copy(_ value: String, _ notice: String) {
@@ -234,6 +589,24 @@ private struct MetricsCard: View {
         if kilobytesPerSecond >= 10 * 1024 { return String(format: "%.0fM", kilobytesPerSecond / 1024) }
         if kilobytesPerSecond >= 1000 { return String(format: "%.1fM", kilobytesPerSecond / 1024) }
         return String(format: "%.0fK", kilobytesPerSecond)
+    }
+}
+
+private struct MetricButton: View {
+    let title: String
+    let value: String
+    var help: String?
+    var tint: Color?
+    var accessory: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            MetricTile(title: title, value: value, help: help, tint: tint, accessory: accessory)
+                .hoverHighlight(cornerRadius: 6)
+        }
+        .buttonStyle(.plain)
+        .suppressesFocusRing()
     }
 }
 
@@ -287,23 +660,26 @@ private struct FanTile: View {
             .hoverHighlight(cornerRadius: 6)
         }
         .buttonStyle(.plain)
+        .suppressesFocusRing()
     }
 }
 
-private struct BatteryTile: View {
+private struct BatteryMetricButton: View {
     @ObservedObject var battery: BatteryManager
+    let action: () -> Void
 
     var body: some View {
-        MetricTile(
+        MetricButton(
             title: "BAT",
             value: battery.hasBattery ? "\(battery.percentage)%" : "AC",
             help: helpText,
-            accessory: battery.hasBattery && battery.isCharging ? "bolt.fill" : nil
+            accessory: battery.hasBattery && battery.isCharging ? "bolt.fill" : nil,
+            action: action
         )
     }
 
     private var helpText: String {
-        guard battery.hasBattery else { return "Power adapter" }
+        guard battery.hasBattery else { return "Battery" }
         if let remaining = battery.timeRemainingFormatted, !remaining.isEmpty { return remaining }
         return battery.isCharging ? "Charging" : (battery.isPluggedIn ? "On power" : "On battery")
     }
@@ -336,6 +712,7 @@ private struct IPButton: View {
             .hoverHighlight(cornerRadius: 6)
         }
         .buttonStyle(.plain)
+        .suppressesFocusRing()
         .help("Copy")
     }
 }
@@ -382,6 +759,7 @@ private struct QuickToggle: View {
             .hoverHighlight(cornerRadius: 8)
         }
         .buttonStyle(.plain)
+        .suppressesFocusRing()
         .help(help)
     }
 }
@@ -518,6 +896,7 @@ private struct ConverterCard: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .suppressesFocusRing()
             }
         }
         .padding(2)
@@ -599,6 +978,7 @@ private struct ConverterCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .suppressesFocusRing()
         .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop)
     }
 
@@ -719,6 +1099,7 @@ private struct CompactTaskRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .suppressesFocusRing()
             .help("Remove")
         }
         .padding(.horizontal, 6)
@@ -747,6 +1128,7 @@ private struct CompactTaskRow: View {
                     .foregroundStyle(.green)
             }
             .buttonStyle(.plain)
+            .suppressesFocusRing()
             .help("Show in Finder")
         case .failed(let error):
             Image(systemName: "exclamationmark.triangle.fill")
@@ -842,6 +1224,7 @@ private struct ClipRow: View {
             .hoverHighlight(cornerRadius: 6)
         }
         .buttonStyle(.plain)
+        .suppressesFocusRing()
     }
 }
 
@@ -874,6 +1257,7 @@ private struct AntiSleepPickerOverlay: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .suppressesFocusRing()
                     }
 
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 3), spacing: 5) {
@@ -891,6 +1275,7 @@ private struct AntiSleepPickerOverlay: View {
                                     .hoverHighlight(cornerRadius: 7)
                             }
                             .buttonStyle(.plain)
+                            .suppressesFocusRing()
                         }
                     }
 

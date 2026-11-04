@@ -4,9 +4,18 @@ import SwiftUI
 @MainActor
 enum PreviewRenderer {
     static func render(
-        to outputURL: URL, showSettings: Bool, showAntiSleepPicker: Bool = false, showFanPicker: Bool = false
+        to outputURL: URL, showSettings: Bool, showSessions: Bool = false, showAntiSleepPicker: Bool = false,
+        showFanPicker: Bool = false, stat: StatTopic? = nil, openSessionDetail: String? = nil
     ) -> Bool {
         let appState = AppState(previewMode: true)
+        if stat != nil {
+            appState.systemMonitor.details.seedPreview()
+        } else {
+            appState.systemMonitor.diskUsedPercent = 62
+            appState.systemMonitor.diskFreeBytes = 180_400_000_000
+            appState.systemMonitor.diskTotalBytes = 494_000_000_000
+            appState.systemMonitor.diskName = "Macintosh HD"
+        }
         if CommandLine.arguments.contains("--sample-tasks") {
             // Layout check for the converter queue (not used by `make preview`).
             let folder = URL(fileURLWithPath: "/tmp")
@@ -29,8 +38,10 @@ enum PreviewRenderer {
         let rootView = PopoverContentView(
             appState: appState,
             showSettings: showSettings,
+            showSessions: showSessions,
+            showStat: stat ?? (showFanPicker ? .fan : nil),
             showAntiSleepPicker: showAntiSleepPicker,
-            showFanControlPicker: showFanPicker,
+            openSessionDetail: openSessionDetail,
             onHeightChange: { reported.value = $0 }
         )
         let hostingView = NSHostingView(rootView: rootView)
@@ -77,23 +88,96 @@ enum PreviewRenderer {
 
     static func renderBatteryPreviews(to dirURL: URL) -> Bool {
         let testCases: [(name: String, image: NSImage)] = [
-            ("battery-charge-85-dark", BatteryIconRenderer.renderChargeOnly(percentage: 85, isCharging: false, isLowPowerMode: false, isDarkMode: true)),
-            ("battery-charge-85-light", BatteryIconRenderer.renderChargeOnly(percentage: 85, isCharging: false, isLowPowerMode: false, isDarkMode: false)),
-            ("battery-charge-100-dark", BatteryIconRenderer.renderChargeOnly(percentage: 100, isCharging: false, isLowPowerMode: false, isDarkMode: true)),
-            ("battery-charge-charging-85-dark", BatteryIconRenderer.renderChargeOnly(percentage: 85, isCharging: true, isLowPowerMode: false, isDarkMode: true)),
-            ("battery-charge-low-15-dark", BatteryIconRenderer.renderChargeOnly(percentage: 15, isCharging: false, isLowPowerMode: false, isDarkMode: true)),
-            ("battery-charge-lowpower-85-dark", BatteryIconRenderer.renderChargeOnly(percentage: 85, isCharging: false, isLowPowerMode: true, isDarkMode: true)),
-            ("battery-bar-charge-85-dark", BatteryIconRenderer.renderBar(percentage: 85, isCharging: false, isLowPowerMode: false, showPercentage: true, showPercentSymbol: false, isDarkMode: true)),
-            ("battery-bar-charge-charging-85-dark", BatteryIconRenderer.renderBar(percentage: 85, isCharging: true, isLowPowerMode: false, showPercentage: true, showPercentSymbol: false, isDarkMode: true)),
-            ("battery-gg-percent-80-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
-            ("battery-gg-percent-80-light", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: false)),
-            ("battery-gg-percent-15-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 15, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
-            ("battery-gg-percent-100-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 100, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
-            ("battery-gg-plain-80-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: false, isLowPowerMode: false, showPercentInside: false, isDarkMode: true)),
-            ("battery-gg-bolt-80-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: true, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
-            ("battery-gg-bigbolt-80-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: true, isLowPowerMode: false, showPercentInside: false, isDarkMode: true)),
-            ("battery-gg-bolt-100-dark", BatteryIconRenderer.renderGoldenGateBar(percentage: 100, isCharging: true, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)),
-            ("battery-gg-bolt-80-light", BatteryIconRenderer.renderGoldenGateBar(percentage: 80, isCharging: true, isLowPowerMode: false, showPercentInside: true, isDarkMode: false)),
+            (
+                "battery-charge-85-dark",
+                BatteryIconRenderer.renderChargeOnly(
+                    percentage: 85, isCharging: false, isLowPowerMode: false, isDarkMode: true)
+            ),
+            (
+                "battery-charge-85-light",
+                BatteryIconRenderer.renderChargeOnly(
+                    percentage: 85, isCharging: false, isLowPowerMode: false, isDarkMode: false)
+            ),
+            (
+                "battery-charge-100-dark",
+                BatteryIconRenderer.renderChargeOnly(
+                    percentage: 100, isCharging: false, isLowPowerMode: false, isDarkMode: true)
+            ),
+            (
+                "battery-charge-charging-85-dark",
+                BatteryIconRenderer.renderChargeOnly(
+                    percentage: 85, isCharging: true, isLowPowerMode: false, isDarkMode: true)
+            ),
+            (
+                "battery-charge-low-15-dark",
+                BatteryIconRenderer.renderChargeOnly(
+                    percentage: 15, isCharging: false, isLowPowerMode: false, isDarkMode: true)
+            ),
+            (
+                "battery-charge-lowpower-85-dark",
+                BatteryIconRenderer.renderChargeOnly(
+                    percentage: 85, isCharging: false, isLowPowerMode: true, isDarkMode: true)
+            ),
+            (
+                "battery-bar-charge-85-dark",
+                BatteryIconRenderer.renderBar(
+                    percentage: 85, isCharging: false, isLowPowerMode: false, showPercentage: true,
+                    showPercentSymbol: false, isDarkMode: true)
+            ),
+            (
+                "battery-bar-charge-charging-85-dark",
+                BatteryIconRenderer.renderBar(
+                    percentage: 85, isCharging: true, isLowPowerMode: false, showPercentage: true,
+                    showPercentSymbol: false, isDarkMode: true)
+            ),
+            (
+                "battery-gg-percent-80-dark",
+                BatteryIconRenderer.renderGoldenGateBar(
+                    percentage: 80, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)
+            ),
+            (
+                "battery-gg-percent-80-light",
+                BatteryIconRenderer.renderGoldenGateBar(
+                    percentage: 80, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: false
+                )
+            ),
+            (
+                "battery-gg-percent-15-dark",
+                BatteryIconRenderer.renderGoldenGateBar(
+                    percentage: 15, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)
+            ),
+            (
+                "battery-gg-percent-100-dark",
+                BatteryIconRenderer.renderGoldenGateBar(
+                    percentage: 100, isCharging: false, isLowPowerMode: false, showPercentInside: true, isDarkMode: true
+                )
+            ),
+            (
+                "battery-gg-plain-80-dark",
+                BatteryIconRenderer.renderGoldenGateBar(
+                    percentage: 80, isCharging: false, isLowPowerMode: false, showPercentInside: false, isDarkMode: true
+                )
+            ),
+            (
+                "battery-gg-bolt-80-dark",
+                BatteryIconRenderer.renderGoldenGateBar(
+                    percentage: 80, isCharging: true, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)
+            ),
+            (
+                "battery-gg-bigbolt-80-dark",
+                BatteryIconRenderer.renderGoldenGateBar(
+                    percentage: 80, isCharging: true, isLowPowerMode: false, showPercentInside: false, isDarkMode: true)
+            ),
+            (
+                "battery-gg-bolt-100-dark",
+                BatteryIconRenderer.renderGoldenGateBar(
+                    percentage: 100, isCharging: true, isLowPowerMode: false, showPercentInside: true, isDarkMode: true)
+            ),
+            (
+                "battery-gg-bolt-80-light",
+                BatteryIconRenderer.renderGoldenGateBar(
+                    percentage: 80, isCharging: true, isLowPowerMode: false, showPercentInside: true, isDarkMode: false)
+            ),
         ]
 
         for (name, img) in testCases {

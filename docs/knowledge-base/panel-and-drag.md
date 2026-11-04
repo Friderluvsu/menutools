@@ -45,9 +45,10 @@ The panel is a key-capable `NSPanel` without `.nonactivatingPanel` (see AGENTS r
 - `didResignKey` runs synchronously on the main actor (`MainActor.assumeIsolated`), not through an async `Task`, so it cannot race the status button's mouse-down.
 
 ## Panel size
-- `PanelHeightKey` reports the natural height of the SwiftUI root. `panelContentHeightChanged` stores it. If the panel is visible, the frame is refitted on the next run-loop turn, keeping the top edge under the status item and capping at the screen's visible height minus 8 pt.
+- `PanelHeightKey` reports the natural height of the SwiftUI root. `panelContentHeightChanged` stores it and refits the window on that same turn with `setFrame(..., animate: false)`. The top edge is captured when the panel opens (`anchoredPanelTop`) and height changes keep that edge, so only the bottom moves.
 - `showPanel` lays the view out before positioning, so the first frame is correct.
 - The hosting view has `sizingOptions = []`. The panel frame is driven only by the reported height.
+- The Sessions page caps that height. Its filter stays put, and the list scrolls once the panel would pass `visibleFrame.height - 8`. The dashboard, Settings and stat pages still report their natural height and do not scroll.
 
 ## Known gaps and manual checks
 - If the drag session swallows the final mouse-up, the panel stays open until the next outside click. The press then restarts normally.

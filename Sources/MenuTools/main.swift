@@ -5,14 +5,30 @@ if let previewFlagIndex = CommandLine.arguments.firstIndex(of: "--render-preview
 {
     let outputURL = URL(fileURLWithPath: CommandLine.arguments[previewFlagIndex + 1])
     let showSettings = CommandLine.arguments.contains("--settings")
+    let showSessions = CommandLine.arguments.contains("--sessions")
     let showAntiSleepPicker = CommandLine.arguments.contains("--anti-sleep-picker")
     let showFanPicker = CommandLine.arguments.contains("--fan-picker")
+    var openSessionDetail: String?
+    if let detailFlag = CommandLine.arguments.firstIndex(of: "--open-session-detail"),
+        CommandLine.arguments.indices.contains(detailFlag + 1)
+    {
+        openSessionDetail = CommandLine.arguments[detailFlag + 1]
+    }
+    var stat: StatTopic?
+    if let statFlag = CommandLine.arguments.firstIndex(of: "--stat"),
+        CommandLine.arguments.indices.contains(statFlag + 1)
+    {
+        stat = StatTopic(rawValue: CommandLine.arguments[statFlag + 1])
+    }
     let rendered = MainActor.assumeIsolated {
         PreviewRenderer.render(
             to: outputURL,
             showSettings: showSettings,
+            showSessions: showSessions,
             showAntiSleepPicker: showAntiSleepPicker,
-            showFanPicker: showFanPicker
+            showFanPicker: showFanPicker,
+            stat: stat,
+            openSessionDetail: openSessionDetail
         )
     }
     exit(rendered ? 0 : 1)
@@ -26,6 +42,11 @@ if let batteryIconsFlagIndex = CommandLine.arguments.firstIndex(of: "--render-ba
         PreviewRenderer.renderBatteryPreviews(to: outputDir)
     }
     exit(rendered ? 0 : 1)
+}
+
+if CommandLine.arguments.contains("--stat-diagnose") {
+    for line in StatSampler.diagnose() { print(line) }
+    exit(0)
 }
 
 if CommandLine.arguments.contains("--window-diagnose") {

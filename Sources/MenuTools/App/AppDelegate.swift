@@ -83,6 +83,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastBatteryPluggedIn: Bool = false
     private var lastBatteryLowPower: Bool = false
     private var lastDarkMode: Bool?
+    private var lastSessionAlert = false
+    /// Trial switch. The old battery and symbol drawing is `updateLegacyStatusItemIcon`.
+    private static let sessionRingEnabled = true
+    private var lastRingInput: Bool?
+    private var lastRingRunning: Bool?
+    private var lastRingEnded: Bool?
+    private var lastRingDark: Bool?
     private var isMouseDownOnButton: Bool = false
     // Outside-press state machine: a press outside the panel only closes it on mouse up, and only if it was not a drag.
     private let dragPasteboard = NSPasteboard(name: .drag)
@@ -97,15 +104,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelClosedAt: TimeInterval = 0
     /// Natural content height reported by SwiftUI; the panel fits it exactly (no scrolling).
     private var panelContentHeight: CGFloat = MacToolsTheme.popoverHeight
+    /// Screen Y of the panel's top edge, captured when the panel is shown. Height changes
+    /// keep this value so the window never slides toward the menu bar.
+    private var anchoredPanelTop: CGFloat?
     private var appearanceObservation: NSKeyValueObservation?
     private var cancellables = Set<AnyCancellable>()
     private var sigtermSource: DispatchSourceSignal?
+    private var sessionMarksObserver: NSObjectProtocol?
+    /// Holds off App Nap while no window is open, so a later input-needed scan still reaches the icon.
+    private var sessionWatchActivity: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.sharedInstance = self
 
         // Run purely as an accessory menu bar application (no Dock icon)
         NSApp.setActivationPolicy(.accessory)
+        // No window means App Nap, which defers the session timers until the panel opens.
+        sessionWatchActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "Menu bar session status")
 
         self.appState = AppState()
 
@@ -168,6 +185,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updateStatusItemIcon()
             }
             .store(in: &cancellables)
+
+        // Session refreshes post this after the new rows are stored. objectWillChange fires in willSet,
+        // which can paint the previous marks and then skip the real change until the panel opens.
+        sessionMarksObserver = NotificationCenter.default.addObserver(
+            forName: .sessionMenuMarksChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateStatusItemIcon() }
+        }
     }
 
     private func setupPanel() {
@@ -237,11 +262,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let maxX = screenVisible.maxX - panelSize.width - 8
         x = max(minX, min(x, maxX))
 
-        let y = buttonFrame.minY - panelSize.height - 4
-        let frame = NSRect(origin: NSPoint(x: x, y: y), size: panelSize)
-        if panel.frame != frame {
-            panel.setFrame(frame, display: panel.isVisible)
-        }
+        // Anchor the top once per open. Later height changes only move the bottom edge.
+        // Animating setFrame is what made the whole panel jump toward the menu bar.
+        let placing = anchoredPanelTop == nil || !panel.isVisible
+        let top = anchoredPanelTop ?? (buttonFrame.minY - 4)
+        anchoredPanelTop = top
+        let originX = placing ? x : panel.frame.minX
+        let frame = NSRect(x: originX, y: top - panelSize.height, width: panelSize.width, height: panelSize.height)
+        guard panel.frame != frame else { return }
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
+        NSAnimationContext.current.allowsImplicitAnimation = false
+        panel.setFrame(frame, display: panel.isVisible, animate: false)
+        NSAnimationContext.endGrouping()
     }
 
     /// Re-fit the panel when the content grows or shrinks (converter tasks, settings, pickers), keeping its top edge.
@@ -249,10 +282,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard height > 1, abs(height - panelContentHeight) >= 0.5 else { return }
         panelContentHeight = height
         guard panel?.isVisible == true else { return }
-        // Called from inside a SwiftUI update; resize the window right after it, not re-entrantly.
-        DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated { self?.updatePanelPosition() }
-        }
+        // Same turn as the SwiftUI layout. Waiting a frame lets the new content draw
+        // in the old window, which reads as the panel jumping.
+        updatePanelPosition()
     }
 
     func statusButtonMouseDown() {
@@ -277,13 +309,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// `activate: false` shows the panel without taking focus, so an in-flight drag session is not disturbed.
     func showPanel(activate: Bool = true) {
+        // Scan before the first layout so a live session is in the tree when the height is measured.
+        appState?.onPopoverWillShow()
         if panel == nil {
             setupPanel()
         }
-        // Lay out first so the reported content height is current before positioning.
+        anchoredPanelTop = nil
         panel?.contentView?.layoutSubtreeIfNeeded()
         updatePanelPosition()
-        appState?.onPopoverWillShow()
         panelShownAt = ProcessInfo.processInfo.systemUptime
         isPanelOpen = true
         if activate {
@@ -426,6 +459,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusItemIcon() {
         guard let button = statusItem.button, let state = appState else { return }
+        if Self.sessionRingEnabled {
+            updateSessionRingIcon(button: button, state: state)
+            return
+        }
+        updateLegacyStatusItemIcon()
+    }
+
+    /// Three capsules. Top is input, lower right is running, lower left is an unseen end.
+    private func updateSessionRingIcon(button: NSStatusBarButton, state: AppState) {
+        let marks = state.sessionMarks
+        let tip = marks.tooltip.isEmpty ? nil : marks.tooltip
+        if button.toolTip != tip { button.toolTip = tip }
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let darkForCache = marks.isQuiet ? false : isDark
+        guard lastRingInput != marks.needsInput || lastRingRunning != marks.running || lastRingEnded != marks.endedUnseen
+            || lastRingDark != darkForCache
+        else { return }
+        button.image = Self.sessionRing(
+            needsInput: marks.needsInput, running: marks.running, ended: marks.endedUnseen, isDark: isDark)
+        // A same-sized image can stay dirty in the menu bar until this app activates (the panel opening).
+        button.needsDisplay = true
+        button.display()
+        lastRingInput = marks.needsInput
+        lastRingRunning = marks.running
+        lastRingEnded = marks.endedUnseen
+        lastRingDark = darkForCache
+    }
+
+    /// Bitmap, same as the old alert dot. A drawing-handler image is composited as a template until this app activates,
+    /// so an orange segment stayed invisible until the panel opened.
+    private static func sessionRing(needsInput: Bool, running: Bool, ended: Bool, isDark: Bool) -> NSImage {
+        let side: CGFloat = 18
+        let quiet = !needsInput && !running && !ended
+        let image = NSImage(size: NSSize(width: side, height: side))
+        image.lockFocus()
+        if let ctx = NSGraphicsContext.current?.cgContext {
+            ctx.setLineWidth(3.3)
+            ctx.setLineCap(.round)
+            let center = CGPoint(x: side / 2, y: side / 2)
+            let radius: CGFloat = 5.85
+            func draw(midDegrees: CGFloat, on: Bool, active: NSColor) {
+                let color: NSColor
+                if on {
+                    color = active
+                } else if quiet {
+                    color = .black
+                } else {
+                    color = isDark ? .white : .black
+                }
+                ctx.setStrokeColor(color.cgColor)
+                let mid = midDegrees * CGFloat.pi / 180
+                let half: CGFloat = 27 * CGFloat.pi / 180
+                ctx.beginPath()
+                ctx.addArc(
+                    center: center, radius: radius, startAngle: mid - half, endAngle: mid + half, clockwise: false)
+                ctx.strokePath()
+            }
+            // 0° is east. Top is input, lower right is running, lower left is ended.
+            draw(midDegrees: 90, on: needsInput, active: NSColor(srgbRed: 1.0, green: 0.624, blue: 0.039, alpha: 1))
+            draw(midDegrees: -30, on: running, active: NSColor(srgbRed: 0.188, green: 0.820, blue: 0.345, alpha: 1))
+            draw(midDegrees: 210, on: ended, active: NSColor(srgbRed: 0.039, green: 0.518, blue: 1.0, alpha: 1))
+        }
+        image.unlockFocus()
+        image.isTemplate = quiet
+        image.accessibilityDescription = "MenuTools"
+        return image
+    }
+
+    /// Battery bars and symbol styles. Used while `sessionRingEnabled` is false.
+    private func updateLegacyStatusItemIcon() {
+        guard let button = statusItem.button, let state = appState else { return }
         let style = state.menuBarIconStyle
 
         if style.isBatteryStyle {
@@ -435,15 +539,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let lowPower = state.battery.isLowPowerMode
             let hasBattery = state.battery.hasBattery
             // The menu bar follows the system appearance; the status button itself can report .aqua over a dark bar.
-            let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let alert = state.hasSessionAlert
 
-            if currentIconStyle != style
-                || lastBatteryPercentage != pct
-                || lastBatteryCharging != charging
-                || lastBatteryPluggedIn != pluggedIn
-                || lastBatteryLowPower != lowPower
-                || lastDarkMode != isDarkMode
-            {
+        if currentIconStyle != style
+            || lastBatteryPercentage != pct
+            || lastBatteryCharging != charging
+            || lastBatteryPluggedIn != pluggedIn
+            || lastBatteryLowPower != lowPower
+            || lastDarkMode != isDarkMode
+            || lastSessionAlert != alert
+        {
                 let image: NSImage
                 switch style {
                 case .batteryBarGoldenGate:
@@ -526,23 +632,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         isDarkMode: isDarkMode
                     )
                 }
-                button.image = image
+                button.image = alert ? Self.withAlertDot(image, isDark: isDarkMode) : image
                 currentIconStyle = style
                 lastBatteryPercentage = pct
                 lastBatteryCharging = charging
                 lastBatteryPluggedIn = pluggedIn
                 lastBatteryLowPower = lowPower
                 lastDarkMode = isDarkMode
+                lastSessionAlert = alert
             }
         } else {
-            guard currentIconStyle != style else { return }
+            let alert = state.hasSessionAlert
+            let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            guard currentIconStyle != style || lastSessionAlert != alert || lastDarkMode != isDarkMode else { return }
             let config = NSImage.SymbolConfiguration(pointSize: 13.5, weight: .semibold)
             let image = NSImage(systemSymbolName: style.symbolName, accessibilityDescription: "MenuTools")?
                 .withSymbolConfiguration(config)
             image?.isTemplate = true
-            button.image = image
+            button.image = alert ? image.flatMap { Self.withAlertDot($0, isDark: isDarkMode) } : image
             currentIconStyle = style
+            lastSessionAlert = alert
+            lastDarkMode = isDarkMode
         }
+    }
+
+    /// Orange dot on the menu bar icon while a Cursor chat has finished and has not been opened yet.
+    private static func withAlertDot(_ image: NSImage, isDark: Bool) -> NSImage {
+        let size = image.size
+        let canvas = NSImage(size: NSSize(width: size.width + 2, height: size.height))
+        canvas.lockFocus()
+        let draw = NSRect(x: 0, y: 0, width: size.width, height: size.height)
+        if image.isTemplate {
+            let tinted = NSImage(size: size)
+            tinted.lockFocus()
+            image.draw(in: NSRect(origin: .zero, size: size))
+            (isDark ? NSColor.white : NSColor.black).setFill()
+            NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
+            tinted.unlockFocus()
+            tinted.isTemplate = false
+            tinted.draw(in: draw)
+        } else {
+            image.draw(in: draw)
+        }
+        let dot = NSRect(x: size.width - 3.5, y: size.height - 5, width: 5, height: 5)
+        NSColor.systemOrange.setFill()
+        NSBezierPath(ovalIn: dot).fill()
+        canvas.unlockFocus()
+        canvas.isTemplate = false
+        return canvas
     }
 
     private func updateStatusItemTitle() {
@@ -555,6 +692,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         ShelfManager.shared.stop()
+        if let sessionWatchActivity {
+            ProcessInfo.processInfo.endActivity(sessionWatchActivity)
+        }
         // Synchronous: the process exits right after this returns, so no Task would ever run.
         appState?.antiSleep.prepareForTermination()
     }

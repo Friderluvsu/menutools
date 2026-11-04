@@ -17,7 +17,11 @@ Verified against the source at the time of writing.
 | Owner | Mechanism | Interval (tolerance) | Runs when |
 |---|---|---|---|
 | AILimitsManager | `Timer.scheduledTimer` | 300 s (30 s) | panel open (`onPopoverWillShow` / `onPopoverDidClose`) |
-| SystemMonitorManager | `Timer.publish` + one 0.7 s warm-up | 2.0 s (0.5 s) | panel open |
+| ClaudeSessionsManager | directory watcher on `~/.claude/sessions`, plus a `Timer` on `.common` | 2.0 s (0.5 s) while a session file is present or the panel is open; 15 s (4.5 s) otherwise | from launch. The watcher sees sessions start and exit; the timer sees status rewrites inside an existing file. A new wait posts "Claude needs input" once |
+| CursorSessionsManager | `Timer` on `.common`, reading `composerHeaders` | 2.0 s (0.5 s) while Cursor is running or the panel is open; 15 s (4.5 s) otherwise | from launch. Read-only. A watched run notifies when `unfinishedRunAt` clears |
+| CodexSessionsManager | `Timer` on `.common`, walking live `codex` pids | 2.0 s (0.5 s) while a Codex process is live, a pid is tracked, or the panel is open; 15 s (4.5 s) otherwise | from launch. Process exit is the end |
+| AntigravitySessionsManager | `Timer` on `.common`, reading `conversation_summaries.db` | 2.0 s (0.5 s) while Antigravity/`agy` is running or the panel is open; 15 s (4.5 s) otherwise | from launch. Read-only. A watched conversation notifies when it goes idle |
+| SystemMonitorManager | `Timer.publish` + one 0.7 s warm-up | 2.0 s (0.5 s) | from launch. Keeps the last 10 minutes for the stat graphs. Tile values publish only while the panel is open. The same tick reads disk capacity. Process CPU and footprint are walked only while the CPU or Memory detail page is open |
 | NetworkBypassManager | `Timer.publish` | 5.0 s (1.5 s) | panel open |
 | FanControlManager | `Timer.publish` | 2.0 s (0.6 s) foreground; 5.0 s (1.5 s) background | foreground: panel open. Background: only in curve mode while the panel is closed |
 | ClipboardManager | `Timer.publish` on `NSPasteboard.changeCount` | 1.0 s (0.5 s) | always, from launch |
@@ -35,6 +39,7 @@ Notes:
 - Panel-scoped polling is started and stopped only by `AppState.onPopoverWillShow` and `onPopoverDidClose`. Do not start a new timer from a view's `onAppear`.
 - The always-on items are cheap: one `changeCount` read per second, the event tap's window-bounds pre-check, and the shelf's throttled compare. Keep new always-on work at that level.
 - Any new timer must set its tolerance explicitly.
+- Session timers are added to `RunLoop.Mode.common`. A `.default`-mode timer does not fire while another app is tracking the mouse, which left the menu bar ring unchanged until the panel opened. `AppDelegate` also holds a `userInitiatedAllowingIdleSystemSleep` activity so App Nap does not defer those timers while no window is open.
 
 ## Baseline (before the overhaul)
 
