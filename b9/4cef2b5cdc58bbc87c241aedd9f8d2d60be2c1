@@ -1,0 +1,87 @@
+AGENTS.md
+  s_ed9f39cdacc252::t_c33c4b50383dbd 4,24,32,42,73,75,77-78,111,134-140,163,183-190,194,199,204,207
+Sources/MenuTools/App/AppDelegate.swift
+  s_ed9f39cdacc252::t_eb1cde841858f4 42-52,120-123,198-200,211-214,228-234,269-275,373,514,521-534,539
+Sources/MenuTools/App/AppState.swift
+  s_ed9f39cdacc252::t_e88fe77dd69799 149,169-170,286,315-316
+Sources/MenuTools/App/PreviewRenderer.swift
+  s_ed9f39cdacc252::t_adcb919cd9008d 43-44,61,91-138
+Sources/MenuTools/Features/AntiSleep/AntiSleepManager.swift
+  s_ed9f39cdacc252::t_94fd05a77f667f 5-14,17-21,26-28,31-48,50-54,59,62-63,65-66,69-73,75-77,81,83,85-99,102,105,107-110,112,114,117-118,120,124-129,131-136,138-140,142,144-148,150-153,156-161,163-175,179-211,215-230,232,234-242,246,250-251,255-260,263-271,274-285,289-302,304,307-331,333-336,338-342,346-355,358-365,368,370-382,384-386,389-404,406-414,416,418-426,430-435,437-438,442-446,449-457,459-468,470-482,485-491,493-495,498-499,502-506
+Sources/MenuTools/Features/ClaudeSessions/ClaudeSession.swift
+  s_ed9f39cdacc252::t_572bfd2b85537c 114-128
+Sources/MenuTools/Features/ClaudeSessions/ClaudeSessionsManager.swift
+  s_ed9f39cdacc252::t_205edb527f7007 10-22,32-40,49-51,62,70,74-81,113-114,132-190,218-219,223,256,259-275
+Sources/MenuTools/Features/FanControl/SMCHelperManager.swift
+  s_ed9f39cdacc252::t_d9373a35ce2c29 18-19,21-24,26-28
+Sources/MenuTools/Features/StatusLights/StatusLights.swift
+  s_ed9f39cdacc252::t_4d586b59a276fd 1-686
+Sources/MenuTools/Views/Components/AILimitsCard.swift
+  s_ed9f39cdacc252::t_4decba321383d0 78,116
+Sources/MenuTools/Views/Components/AgentSessionRows.swift
+  s_ed9f39cdacc252::t_8360f200734f50 68-69,72-76,169-170,174-203
+Sources/MenuTools/Views/Components/ClaudeSessionsCard.swift
+  s_ed9f39cdacc252::t_25bb537380fbc9 13-16,35-38
+Sources/MenuTools/Views/Components/DashboardLayout.swift
+  s_ed9f39cdacc252::t_b7b787d91d6b1a 1-266
+Sources/MenuTools/Views/Components/MacToolsTheme.swift
+  s_ed9f39cdacc252::t_268d023f9a8a0d 39,56-58,61-62,127,134-135
+Sources/MenuTools/Views/Components/SessionsDashboardSection.swift
+  s_ed9f39cdacc252::t_5ded287ad4ee3b 110,124-125,308,342,344-345,432-435,439-440,443-448,453,472,496-498,500,502-594,596-604,607-634,637,643,658,663,689-701
+Sources/MenuTools/Views/Components/ShelfCard.swift
+  s_ed9f39cdacc252::t_aa0ea0ad7ef687 5,81,107,126-127,130-131
+Sources/MenuTools/Views/Components/StatDetailPage.swift
+  s_bb3d1f479c2e58::t_ecf03f20a93cd8 77,82,121,174-175,182,194,230,235-236,264,268,271-272,282,467,469-476,478-484,524,545,550,576,600,620,626,655,662-663,697,720-721,724,748,750,800-802,812-813,816-817,821-822,846
+Sources/MenuTools/Views/PopoverContentView.swift
+  s_ed9f39cdacc252::t_799ddd45cf8e33 21,40,58,62-65,87-88,102-104,107,167-170,178,395,402,410,412-414,418-420,449-480,485,496,508-509,513,517,521-531,540,542,550,552-553,558,560,562,683,710-711,719,729,760,782,795,824-825,828-829,840,846-866,878-883,885,890-897,958,997-998,1008-1009,1034-1035,1075-1076,1079,1081,1175,1214,1300,1330,1342,1344,1347-1348,1358,1360-1361,1368,1378-1382,1388-1389,1398-1408,1413-1415,1422-1428
+Sources/MenuTools/Views/Tabs/SettingsTabView.swift
+  s_ed9f39cdacc252::t_daca0845b1aaad 7,39,117-119,419-421,470,492-495,566-663,812
+Sources/MenuTools/Views/Theme/AppTheme.swift
+  s_ed9f39cdacc252::t_6d6379b3f14250 1-196
+Sources/MenuTools/Views/Theme/CatalogEasterEggs.swift
+  s_ed9f39cdacc252::t_59d295756595a7 1-310
+Sources/MenuTools/Views/Theme/ThemeBackdrop.swift
+  s_ed9f39cdacc252::t_1ab15f4d6098c5 1-107
+Sources/MenuTools/Views/Theme/ThemeCatalog.swift
+  s_ed9f39cdacc252::t_2132a386fca3c8 1-190
+Sources/MenuTools/Views/Theme/ThemeEasterEgg.swift
+  s_ed9f39cdacc252::t_03c9b79497b8aa 1-107
+Sources/MenuTools/Views/Theme/ThemeGallery.swift
+  s_ed9f39cdacc252::t_bea6a088c053c0 1-189
+Sources/MenuTools/main.swift
+  s_ed9f39cdacc252::t_74051c3ceb2ca6 24-35,48-55,66-71
+docs/AGENT_GUIDE.md
+  s_ed9f39cdacc252::t_03a41cc7c8cfa4 25,118,137,207-208
+docs/knowledge-base/README.md
+  s_ed9f39cdacc252::t_b556b23a2c3855 19
+docs/knowledge-base/claude-sessions.md
+  s_ed9f39cdacc252::t_0131af1582bf40 41-53
+docs/knowledge-base/themes.md
+  s_ed9f39cdacc252::t_8bc3eec89b0ad8 1-46
+docs/knowledge-base/troubleshooting.md
+  s_ed9f39cdacc252::t_f7899d8794e8fe 79-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "b94cef2b5cdc58bbc87c241aedd9f8d2d60be2c1",
+  "prompts": {},
+  "sessions": {
+    "s_bb3d1f479c2e58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5cedeed4-542d-4489-b5d0-325fae3ed56d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    },
+    "s_ed9f39cdacc252": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e5c4215-f2cc-49eb-acc4-b780e86f9223",
+        "model": "unknown"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    }
+  }
+}
