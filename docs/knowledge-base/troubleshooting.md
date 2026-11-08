@@ -76,7 +76,12 @@ Each entry gives the symptom, the cause in the code, and the fix. Source referen
 ## Sleep
 
 ### The Mac stays awake (or does not sleep) after MenuTools was force-killed
-- A `SIGKILL` skips cleanup, so `pmset disablesleep` may still be set. `caffeinate` itself exits with MenuTools (`-w <pid>`). Launch MenuTools and quit it normally. At launch the app detects `SleepDisabled 1` and restores it on quit. Check the state with `pmset -g | grep SleepDisabled`.
+- A `SIGKILL` skips cleanup, so `pmset disablesleep` may still be set (Closed-lid). Power assertions are released by the kernel. Launch MenuTools: with no Closed-lid session to resume, it restores `SleepDisabled 0` through the helper, or shows Retry on the Lid tile. Check with `pmset -g | grep SleepDisabled`.
+
+### Awake was on but the Mac slept with the lid closed
+- Awake only stops idle sleep. Closing the lid sleeps the Mac; use the **Lid** tile (Closed-lid) for that.
+- Closed-lid also turns off at the battery guard (Settings → General → "Closed-lid battery stop"), with a "Closed-lid off" notification.
+- `build/MenuTools.app/Contents/MacOS/MenuTools --anti-sleep-diagnose` checks both sessions on this Mac.
 
 ## Shelf and drag-and-drop
 

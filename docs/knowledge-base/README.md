@@ -16,6 +16,7 @@ Focused notes on how MenuTools works, written for maintainers and coding agents.
 | [performance.md](performance.md) | Timer and watcher inventory, measurement method, baseline and measurement history, open items. |
 | [system-stats.md](system-stats.md) | Clickable CPU, memory, temperature, network and battery details: what each page shows and where the numbers come from. |
 | [pixel-shimmer.md](pixel-shimmer.md) | SymVibe `.sf-face` city-lights pixel recipe (tried on running rows / Awake, then removed). |
+| [themes.md](themes.md) | Panel themes: catalogue, what each theme changes, environment plumbing, easter eggs, preview flags. |
 | [troubleshooting.md](troubleshooting.md) | Symptom → cause → fix for window controls, AI limits, preview and build, sleep, shelf and drag, performance. |
 
 ## Conventions

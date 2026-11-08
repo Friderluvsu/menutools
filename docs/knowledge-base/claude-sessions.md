@@ -38,4 +38,16 @@ Claude Code writes `status` from the **main** loop (`running` → `busy`, `requi
 
 The watcher and timer start at launch. While a session file is present, or while the panel is open, the read is every 2 s (tolerance 0.5 s). Otherwise it is every 15 s. The watcher sees files appear and disappear. A status rewrite inside an existing file does not change the directory, so the timer covers that. The published array is replaced only when the decoded sessions differ.
 
-The first time a session needs input, MenuTools posts **Claude needs input**, body `name · project`, and on that same read turns the top segment of the menu bar ring orange while the panel stays closed. Orange stays until that session is no longer waiting. The pid is stored in `~/Library/Application Support/MenuTools/claude-session-watch.json`, so a relaunch does not post again for the same wait. A working session turns the lower-right segment green. Claude has no ended row.
+The first time a session needs input, MenuTools posts **Claude needs input**, body `name · project`, and on that same read turns the top segment of the menu bar ring orange while the panel stays closed. Orange stays until that session is no longer waiting. The pid is stored in `~/Library/Application Support/MenuTools/claude-session-watch.json`, so a relaunch does not post again for the same wait. A working session turns the lower-right segment green.
+
+## Finished runs (Done)
+
+A Claude process stays open after a task, so the finish is the transition instead: a session that was Running (or waiting on input mid-run) and then holds Idle for 3 s, after a run of at least 10 s, is marked **Done** (blue status, "4m ago" in the uptime slot), posts **Claude finished** (`name · project · ran 12m`) and turns the lower-left (blue) light on until the row is seen, with the same seen / fresh rules as other providers' Ended rows. Done clears when that session starts working again or its process exits. Run starts and Done marks are saved in `claude-session-watch.json`, so a relaunch mid-run still catches the finish. Claude has no separate Ended row.
+
+| Rule | Value |
+|---|---|
+| Counts as a run | `isWorking`, or `needsInput` once a run has started (a permission prompt is part of the run) |
+| Finish | Idle (not working, not waiting) for `idleHold` = 3 s |
+| Announced | Run length (start → first idle read) ≥ `minimumRun` = 10 s |
+| Cleared | The same pid works again, or the session file goes away |
+| Seen | Panel opened with the row inline on the dashboard, or the Sessions page opened (`AppState.acknowledgeEndedSessions`) |

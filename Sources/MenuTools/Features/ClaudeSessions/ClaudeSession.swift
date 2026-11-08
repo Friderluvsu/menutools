@@ -111,6 +111,21 @@ struct ClaudeSession: Identifiable, Equatable, Sendable {
             version: "2.1.316",
             startedAt: Date(timeIntervalSinceNow: -8 * 60)
         ),
+        // Finished run: the preview marks it Done.
+        ClaudeSession(
+            pid: 12077,
+            sessionId: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+            name: "refactor build script",
+            project: "menutools",
+            cwd: "/Users/me/projects/menutools",
+            status: "idle",
+            waitingFor: nil,
+            hasActiveWork: false,
+            kind: "interactive",
+            entrypoint: "cli",
+            version: "2.1.316",
+            startedAt: Date(timeIntervalSinceNow: -26 * 60)
+        ),
     ]
 }
 

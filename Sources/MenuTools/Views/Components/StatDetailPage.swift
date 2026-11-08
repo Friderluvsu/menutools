@@ -74,12 +74,12 @@ private struct CPUDetail: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
-            UsageChart(values: snapshot.cpuHistory, color: .pink)
+            UsageChart(values: snapshot.cpuHistory, color: StatPalette.cpu)
             MeterGrid(items: meters)
             LoadTiles(one: snapshot.load1, five: snapshot.load5, fifteen: snapshot.load15)
             ProcessList(
                 title: "Top",
-                tint: .pink,
+                tint: StatPalette.cpu,
                 rows: snapshot.topCPU.map { ($0.id, $0.name, StatFormat.tenths($0.cpuPercent), $0.cpuPercent) })
         }
     }
@@ -118,7 +118,7 @@ private struct GPUDetail: View {
                         .lineLimit(1)
                 }
             }
-            UsageChart(values: snapshot.gpuHistory, color: StatPalette.performance)
+            UsageChart(values: snapshot.gpuHistory, color: StatPalette.gpu)
             if !meters.isEmpty {
                 MeterGrid(items: meters)
             }
@@ -171,15 +171,15 @@ private struct MemoryDetail: View {
                 Text(StatFormat.wholePercent(snapshot.memoryPercent))
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
             }
-            MiniBar(fraction: snapshot.memoryPercent / 100, color: .blue, height: 4)
-            UsageChart(values: snapshot.memoryHistory, color: .blue)
+            MiniBar(fraction: snapshot.memoryPercent / 100, color: StatPalette.memory, height: 4)
+            UsageChart(values: snapshot.memoryHistory, color: StatPalette.memory)
             MeterGrid(items: memoryMeters)
             if !memoryFacts.isEmpty {
                 FactGrid(items: memoryFacts)
             }
             ProcessList(
                 title: "Top",
-                tint: .blue,
+                tint: StatPalette.memory,
                 rows: snapshot.topMemory.map {
                     ($0.id, $0.name, StatFormat.bytes($0.memoryBytes), Double($0.memoryBytes))
                 })
@@ -191,7 +191,7 @@ private struct MemoryDetail: View {
         return [
             Meter(
                 id: "app", label: "App", value: StatFormat.gigabytes(snapshot.memoryAppGB),
-                fraction: snapshot.memoryAppGB / total, color: .blue),
+                fraction: snapshot.memoryAppGB / total, color: StatPalette.memory),
             Meter(
                 id: "wired", label: "Wired", value: StatFormat.gigabytes(snapshot.memoryWiredGB),
                 fraction: snapshot.memoryWiredGB / total, color: StatPalette.performance),
@@ -227,12 +227,13 @@ private struct TemperatureDetail: View {
             Text(snapshot.temperature > 0 ? StatFormat.temperature(snapshot.temperature) : "—")
                 .font(.system(size: 22, weight: .semibold, design: .monospaced))
                 .foregroundStyle(snapshot.temperature >= 90 ? Color.red : Color.primary)
-            UsageChart(values: snapshot.temperatureHistory, color: .orange)
+            UsageChart(values: snapshot.temperatureHistory, color: StatPalette.temperature)
             if fan.hasFans {
                 FactGrid(items: [
                     Fact(
                         id: "fan", label: "Fan",
-                        value: fan.currentRPM > 0 ? "\(fan.currentRPM) RPM" : fan.fanDisplayShort, tint: .teal)
+                        value: fan.currentRPM > 0 ? "\(fan.currentRPM) RPM" : fan.fanDisplayShort, tint: StatPalette.fan
+                    )
                 ])
             }
         }
@@ -260,14 +261,15 @@ private struct NetworkDetail: View {
 
     private var networkFacts: [Fact] {
         var items = [
-            Fact(id: "in", label: "Received", value: StatFormat.bytes(snapshot.bytesIn), tint: .cyan),
+            Fact(id: "in", label: "Received", value: StatFormat.bytes(snapshot.bytesIn), tint: StatPalette.down),
             Fact(id: "out", label: "Sent", value: StatFormat.bytes(snapshot.bytesOut), tint: StatPalette.up),
         ]
         if let link = snapshot.interfaceLabel {
-            items.append(Fact(id: "link", label: "Link", value: link, tint: .cyan))
+            items.append(Fact(id: "link", label: "Link", value: link, tint: StatPalette.down))
         }
         if let peak = snapshot.downloadHistory.max(), peak >= 1 {
-            items.append(Fact(id: "peak-down", label: "Peak down", value: StatFormat.speed(peak), tint: .cyan))
+            items.append(
+                Fact(id: "peak-down", label: "Peak down", value: StatFormat.speed(peak), tint: StatPalette.down))
         }
         if let peak = snapshot.uploadHistory.max(), peak >= 1 {
             items.append(Fact(id: "peak-up", label: "Peak up", value: StatFormat.speed(peak), tint: StatPalette.up))
@@ -277,7 +279,7 @@ private struct NetworkDetail: View {
                 id: "latency",
                 label: "Latency",
                 value: snapshot.latencyMs.map(StatFormat.milliseconds) ?? "—",
-                tint: .cyan,
+                tint: StatPalette.down,
                 help: "Round trip to 1.1.1.1"))
         items.append(
             Fact(
@@ -462,15 +464,24 @@ private struct BatteryDetail: View {
 
 // MARK: - Pieces
 
+@MainActor
 private enum StatPalette {
-    static let system = Color(red: 0.98, green: 0.38, blue: 0.42)
-    static let user = Color(red: 0.35, green: 0.62, blue: 1)
+    private static var charts: ChartPalette { ThemeManager.shared.theme.charts }
+    static var cpu: Color { charts.cpu }
+    static var gpu: Color { charts.gpu }
+    static var memory: Color { charts.memory }
+    static var temperature: Color { charts.temperature }
+    static var fan: Color { charts.fan }
+    static var system: Color { charts.system }
+    static var user: Color { charts.user }
     static let idle = Color.primary.opacity(0.38)
-    static let performance = Color(red: 0.64, green: 0.45, blue: 1)
-    static let efficiency = Color(red: 0.25, green: 0.78, blue: 0.72)
-    static let down = Color(red: 0.28, green: 0.62, blue: 1)
-    static let up = Color(red: 1, green: 0.38, blue: 0.34)
-    static let disk = Color(red: 0.93, green: 0.62, blue: 0.22)
+    static var performance: Color { charts.performance }
+    static var efficiency: Color { charts.efficiency }
+    static var down: Color { charts.down }
+    static var up: Color { charts.up }
+    static var disk: Color { charts.disk }
+    static var lineWidth: CGFloat { charts.lineWidth }
+    static var fillOpacity: Double { charts.fillOpacity }
 }
 
 private struct Meter: Identifiable {
@@ -510,6 +521,7 @@ private struct MeterGrid: View {
 }
 
 private struct MeterChip: View {
+    @Environment(\.appTheme) private var theme
     let item: Meter
 
     var body: some View {
@@ -530,11 +542,12 @@ private struct MeterChip: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous))
     }
 }
 
 private struct LoadTiles: View {
+    @Environment(\.appTheme) private var theme
     let one: Double
     let five: Double
     let fifteen: Double
@@ -560,7 +573,7 @@ private struct LoadTiles: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous))
     }
 }
 
@@ -584,6 +597,7 @@ private struct FactGrid: View {
 }
 
 private struct FactChip: View {
+    @Environment(\.appTheme) private var theme
     let item: Fact
 
     var body: some View {
@@ -603,12 +617,13 @@ private struct FactChip: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous))
         .help(item.help ?? "")
     }
 }
 
 private struct ProcessList: View {
+    @Environment(\.appTheme) private var theme
     let title: String
     let tint: Color
     /// pid, name, formatted value, raw magnitude used for the bar.
@@ -637,13 +652,15 @@ private struct ProcessList: View {
                     }
                 }
                 .padding(.vertical, 2)
-                .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(8), style: .continuous))
                 .animation(.smooth(duration: 0.4, extraBounce: 0), value: order)
             }
         }
     }
 }
 
+/// Plain text on purpose: `.numericText()` rolls are rasterised on the CPU with a blur, and with
+/// 8 rows re-ranking every 2 s they cost 25–45% CPU while the page was open.
 private struct ProcessRow: View {
     let rank: Int
     let name: String
@@ -657,8 +674,6 @@ private struct ProcessRow: View {
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(.tertiary)
                 .frame(width: 12, alignment: .trailing)
-                .contentTransition(.numericText())
-                .animation(.smooth(duration: 0.4, extraBounce: 0), value: rank)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(name)
@@ -669,8 +684,6 @@ private struct ProcessRow: View {
                     Text(value)
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .lineLimit(1)
-                        .contentTransition(.numericText())
-                        .animation(.smooth(duration: 0.4, extraBounce: 0), value: value)
                 }
                 MiniBar(fraction: fraction, color: tint, height: 2)
             }
@@ -681,6 +694,7 @@ private struct ProcessRow: View {
 }
 
 private struct UsageChart: View {
+    @Environment(\.appTheme) private var theme
     var values: [Double] = []
     var series: [[Double]]?
     var color: Color = .primary
@@ -703,9 +717,11 @@ private struct UsageChart: View {
         let lines = plotted
         let paints = colors ?? [color]
         let shared = bounds(lines.flatMap { $0.map(\.value) })
+        let lineWidth = theme.charts.lineWidth
+        let fillOpacity = theme.charts.fillOpacity
         Canvas { context, size in
             if split, lines.count >= 2 {
-                drawSplit(lines, paints: paints, in: context, size: size)
+                drawSplit(lines, paints: paints, lineWidth: lineWidth, in: context, size: size)
             } else {
                 let slots = CGFloat(SystemStatSnapshot.historyLimit - 1)
                 let span = max(shared.ceiling - shared.lower, 0.001)
@@ -729,9 +745,9 @@ private struct UsageChart: View {
                     if index == 0 {
                         fill.addLine(to: CGPoint(x: size.width, y: size.height))
                         fill.closeSubpath()
-                        context.fill(fill, with: .color(paint.opacity(0.16)))
+                        context.fill(fill, with: .color(paint.opacity(fillOpacity)))
                     }
-                    context.stroke(stroke, with: .color(paint.opacity(0.9)), lineWidth: 1.25)
+                    context.stroke(stroke, with: .color(paint.opacity(0.9)), lineWidth: lineWidth)
                 }
             }
         }
@@ -781,7 +797,9 @@ private struct UsageChart: View {
 
     /// Upload rises from the middle, download falls from it. Each side uses its own peak, and the
     /// samples span the full width so a short history is still readable.
-    private func drawSplit(_ lines: [[PlotPoint]], paints: [Color], in context: GraphicsContext, size: CGSize) {
+    private func drawSplit(
+        _ lines: [[PlotPoint]], paints: [Color], lineWidth: CGFloat, in context: GraphicsContext, size: CGSize
+    ) {
         let mid = size.height / 2
         var rule = Path()
         rule.move(to: CGPoint(x: 0, y: mid))
@@ -791,17 +809,17 @@ private struct UsageChart: View {
         let download = lines[0]
         let upload = lines[1]
         trace(
-            download, peak: download.map(\.value).max() ?? 0, upward: false, paint: paints[0], mid: mid, in: context,
-            size: size)
+            download, peak: download.map(\.value).max() ?? 0, upward: false, paint: paints[0], mid: mid,
+            lineWidth: lineWidth, in: context, size: size)
         let uploadPaint = paints.count > 1 ? paints[1] : paints[0]
         trace(
-            upload, peak: upload.map(\.value).max() ?? 0, upward: true, paint: uploadPaint, mid: mid, in: context,
-            size: size)
+            upload, peak: upload.map(\.value).max() ?? 0, upward: true, paint: uploadPaint, mid: mid,
+            lineWidth: lineWidth, in: context, size: size)
     }
 
     private func trace(
-        _ line: [PlotPoint], peak: Double, upward: Bool, paint: Color, mid: CGFloat, in context: GraphicsContext,
-        size: CGSize
+        _ line: [PlotPoint], peak: Double, upward: Bool, paint: Color, mid: CGFloat, lineWidth: CGFloat,
+        in context: GraphicsContext, size: CGSize
     ) {
         guard line.count >= 2 else { return }
         let ceiling = max(peak, 1)
@@ -825,7 +843,7 @@ private struct UsageChart: View {
         fill.addLine(to: CGPoint(x: size.width, y: mid))
         fill.closeSubpath()
         context.fill(fill, with: .color(paint.opacity(0.22)))
-        context.stroke(stroke, with: .color(paint), lineWidth: 1.6)
+        context.stroke(stroke, with: .color(paint), lineWidth: lineWidth + 0.35)
     }
 
     private func bounds(_ samples: [Double]) -> (lower: Double, ceiling: Double) {

@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Compact dashboard card for the Shelf: ~32pt empty, ~60pt with items. No scrolling.
 struct ShelfCard: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var manager: ShelfManager
     @State private var isTargeted = false
 
@@ -77,7 +78,7 @@ struct ShelfCard: View {
                         .frame(width: 40, height: 26)
                         .background(
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(MacToolsTheme.controlBackground)
+                                .fill(theme.controlFill)
                         )
                         .contentShape(Rectangle())
                 }
@@ -103,6 +104,7 @@ struct ShelfCard: View {
 }
 
 private struct ShelfChip: View {
+    @Environment(\.appTheme) private var theme
     let item: ShelfItem
     @ObservedObject var manager: ShelfManager
     @State private var isHovered = false
@@ -121,12 +123,12 @@ private struct ShelfChip: View {
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, minHeight: 26, maxHeight: 26, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(isHovered ? MacToolsTheme.hoverBackground : MacToolsTheme.controlBackground)
+            RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous)
+                .fill(isHovered ? theme.hoverFill : theme.controlFill)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(isHovered ? MacToolsTheme.borderHoverColor : MacToolsTheme.borderColor, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous)
+                .strokeBorder(theme.cardStroke, lineWidth: theme.strokeWidth)
         )
         .overlay(
             ShelfDragSource(

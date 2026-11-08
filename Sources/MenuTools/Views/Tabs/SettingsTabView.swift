@@ -4,6 +4,7 @@ import SwiftUI
 /// Settings is split into short pages so the panel always fits its content without scrolling.
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general = "General"
+    case look = "Look"
     case windows = "Windows"
     case messages = "Messages"
     case network = "Network"
@@ -35,6 +36,7 @@ struct SettingsTabView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .controlSize(.small)
             .padding(.bottom, 2)
 
             // All four pages are built with Settings. A tab click only changes which
@@ -112,6 +114,9 @@ private struct SettingsSectionPage: View {
                 shelfCard
                 AILimitsSettingsCard(manager: appState.aiLimits)
                 appInfoCard
+            case .look:
+                ThemeGallery()
+                DashboardLayoutCard()
             case .windows:
                 permissionsCard
                 windowControlsCard
@@ -411,8 +416,9 @@ private struct SettingsSectionPage: View {
             SettingsRow(title: "System proxy") {
                 toggle(
                     get: { appState.network.configureSystemProxy },
-                    set: { appState.network.configureSystemProxy = $0 })
-                    .disabled(appState.network.isSpoofDPIRunning)
+                    set: { appState.network.configureSystemProxy = $0 }
+                )
+                .disabled(appState.network.isSpoofDPIRunning)
             }
 
             Divider().opacity(0.35)
@@ -461,21 +467,7 @@ private struct SettingsSectionPage: View {
 
     private var generalCard: some View {
         SettingsCard(title: "General", icon: "gearshape", color: .secondary) {
-            SettingsRow(title: "Menu bar icon") {
-                Picker(
-                    "",
-                    selection: Binding(
-                        get: { appState.menuBarIconStyle },
-                        set: { appState.menuBarIconStyle = $0 })
-                ) {
-                    ForEach(MenuBarIconStyle.allCases) { style in
-                        Label(style.rawValue, systemImage: style.symbolName).tag(style)
-                    }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(width: 190)
-            }
+            StatusLightsRows(appState: appState)
 
             Divider().opacity(0.35)
 
@@ -494,6 +486,10 @@ private struct SettingsSectionPage: View {
                 .controlSize(.small)
                 .frame(width: 190)
             }
+
+            Divider().opacity(0.35)
+
+            LidBatteryGuardRow(antiSleep: appState.antiSleep)
 
             Divider().opacity(0.35)
 
@@ -564,6 +560,104 @@ private struct SettingsSectionPage: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(.small)
+    }
+}
+
+// MARK: - Closed-lid battery guard
+
+/// Closed-lid turns itself off when the battery (unplugged) reaches this level.
+private struct LidBatteryGuardRow: View {
+    @ObservedObject var antiSleep: AntiSleepManager
+
+    var body: some View {
+        SettingsRow(title: "Closed-lid battery stop") {
+            Picker("", selection: $antiSleep.lidBatteryGuard) {
+                ForEach(AntiSleepManager.batteryGuardOptions, id: \.self) { level in
+                    Text(level == 0 ? "Off" : "\(level)%").tag(level)
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .frame(width: 80)
+            .help("Closed-lid turns off at this battery level when unplugged")
+        }
+    }
+}
+
+// MARK: - Status lights
+
+/// Menu bar icon. "Status lights" on: colour session lights (style, animation, demo) and a separate
+/// panel icon. Off: one static icon, which also shows in the panel header.
+private struct StatusLightsRows: View {
+    @ObservedObject var appState: AppState
+    @ObservedObject private var settings = StatusLightSettings.shared
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        SettingsRow(title: "Status lights") {
+            HStack(spacing: 6) {
+                if settings.enabled {
+                    Button("Test") { settings.playDemo() }
+                        .controlSize(.small)
+                        .fixedSize()
+                        .help("Play a demo in the menu bar")
+                }
+                Toggle("", isOn: $settings.enabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .help("Colour lights for sessions. Off shows a static icon.")
+            }
+        }
+        if settings.enabled {
+            SettingsRow(title: "Style", isSecondary: true) {
+                Picker("", selection: $settings.style) {
+                    ForEach(StatusLightStyle.allCases) { style in
+                        Label {
+                            Text(style.rawValue)
+                        } icon: {
+                            Image(nsImage: preview(style))
+                        }
+                        .tag(style)
+                    }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 128)
+            }
+            .padding(.leading, 12)
+            SettingsRow(title: "Animate", isSecondary: true) {
+                Toggle("", isOn: $settings.animations)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+            .padding(.leading, 12)
+        }
+        Divider().opacity(0.35)
+        SettingsRow(title: settings.enabled ? "Panel icon" : "Menu bar icon") {
+            Picker(
+                "",
+                selection: Binding(
+                    get: { appState.menuBarIconStyle },
+                    set: { appState.menuBarIconStyle = $0 })
+            ) {
+                ForEach(MenuBarIconStyle.allCases) { style in
+                    Label(style.rawValue, systemImage: style.symbolName).tag(style)
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .frame(width: 190)
+        }
+    }
+
+    /// Two lights on, so the menu shows how each style reads.
+    private func preview(_ style: StatusLightStyle) -> NSImage {
+        StatusLightsRenderer.image(
+            style: style,
+            lights: [StatusLightFrame(level: 1), StatusLightFrame(level: 1), StatusLightFrame(level: 0)],
+            isDark: scheme == .dark)
     }
 }
 
@@ -715,7 +809,7 @@ private struct ShortcutRow: View {
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .padding(.horizontal, 7)
                 .frame(minWidth: 62, minHeight: 20)
-                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+                .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
             Text(description)
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)

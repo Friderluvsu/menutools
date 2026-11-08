@@ -107,7 +107,7 @@ struct DashboardSessionsSection: View {
     }
 
     private var tally: SessionStatusTally {
-        SessionStatusTally.claude(claude.sessions)
+        SessionStatusTally.claude(claude.sessions, finished: claude.finished)
             + .cursor(cursor.sessions, ended: cursor.ended.count)
             + .codex(live: codex.sessions.count, ended: codex.ended.count)
             + .antigravity(antigravity.sessions, ended: antigravity.ended.count)
@@ -121,7 +121,8 @@ struct DashboardSessionsSection: View {
 
     /// Same rows the list paints blue: not yet seen, or still fresh from this visit.
     private var uncheckedEnded: Int {
-        cursor.ended.filter { !$0.seen || cursor.freshEnded.contains($0.id) }.count
+        claude.sessions.filter { claude.isFreshFinish($0.id) && !$0.isWorking && !$0.needsInput }.count
+            + cursor.ended.filter { !$0.seen || cursor.freshEnded.contains($0.id) }.count
             + codex.ended.filter { !$0.seen || codex.freshEnded.contains($0.id) }.count
             + antigravity.ended.filter { !$0.seen || antigravity.freshEnded.contains($0.id) }.count
     }
@@ -304,6 +305,7 @@ struct SessionsPage: View {
 
 /// Equal-width provider tabs. The selected one filters the list under it.
 private struct SessionFilterBar: View {
+    @Environment(\.appTheme) private var theme
     let filters: [SessionProviderFilter]
     @Binding var selection: SessionProviderFilter
 
@@ -337,10 +339,10 @@ private struct SessionFilterBar: View {
         }
         .padding(2)
         .frame(height: SessionDashboardLayout.filterBarHeight)
-        .background(MacToolsTheme.controlBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(theme.controlFill, in: RoundedRectangle(cornerRadius: theme.radius(8), style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(MacToolsTheme.borderColor, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius(8), style: .continuous)
+                .strokeBorder(theme.cardStroke, lineWidth: theme.strokeWidth)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Session filters")
@@ -427,30 +429,28 @@ private struct SessionBorderMix: Equatable {
 
 /// Proportional stroke plus one traveling light per session. The whole pattern turns together,
 /// so each light stays inside its own colour.
+///
+/// The turn is a Core Animation rotation, so the window server animates it on the GPU and the
+/// SwiftUI graph is not re-rendered per frame (that cost ~15–40% CPU while the panel was open).
+/// It runs only while the dashboard is the visible page and Reduce Motion is off.
 private struct TravelingNeonBorder: View {
     var mix: SessionBorderMix
     var cornerRadius: CGFloat
-    @State private var spin = false
+    @Environment(\.dashboardOnScreen) private var onScreen
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let turns = spin ? 360.0 : 0
-        ZStack {
-            PerimeterFill(stops: baseStops, cornerRadius: cornerRadius, lineWidth: 1.35, degrees: turns)
-            PerimeterFill(stops: sparkStops, cornerRadius: cornerRadius, lineWidth: 1.8, degrees: turns)
-                .blur(radius: 2.2)
-                .opacity(0.55)
-            PerimeterFill(stops: sparkStops, cornerRadius: cornerRadius, lineWidth: 1.35, degrees: turns)
-        }
+        NeonBorderLayerView(
+            baseStops: baseStops,
+            sparkStops: sparkStops,
+            cornerRadius: cornerRadius,
+            spinning: onScreen && !reduceMotion
+        )
         .allowsHitTesting(false)
-        .onAppear {
-            withAnimation(.linear(duration: 3.2).repeatForever(autoreverses: false)) {
-                spin = true
-            }
-        }
     }
 
     /// Each colour holds its share of the loop, and neighbouring colours blend across a short seam.
-    private var baseStops: [Gradient.Stop] {
+    private var baseStops: [NeonStop] {
         let bands = mix.bands
         let total = Double(bands.reduce(0) { $0 + $1.count })
         guard total > 0 else { return [] }
@@ -469,7 +469,7 @@ private struct TravelingNeonBorder: View {
     }
 
     /// One hot spot per session, centered in that session's slice of its colour.
-    private var sparkStops: [Gradient.Stop] {
+    private var sparkStops: [NeonStop] {
         let bands = mix.bands
         let total = Double(bands.reduce(0) { $0 + $1.count })
         guard total > 0 else { return [] }
@@ -493,36 +493,154 @@ private struct TravelingNeonBorder: View {
     }
 }
 
-/// Angular gradient masked down to the card's stroke, then turned so the pattern travels.
-private struct PerimeterFill: View {
-    var stops: [Gradient.Stop]
+private struct NeonBorderLayerView: NSViewRepresentable {
+    var baseStops: [NeonStop]
+    var sparkStops: [NeonStop]
     var cornerRadius: CGFloat
-    var lineWidth: CGFloat
-    var degrees: Double
+    var spinning: Bool
 
-    var body: some View {
-        GeometryReader { geo in
-            let span = max(geo.size.width, geo.size.height) * 1.6
-            Circle()
-                .fill(AngularGradient(stops: stops, center: .center))
-                .frame(width: span, height: span)
-                .rotationEffect(.degrees(degrees))
-                .position(x: geo.size.width / 2, y: geo.size.height / 2)
-        }
-        .mask {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(lineWidth: lineWidth)
-        }
+    func makeNSView(context: Context) -> NeonBorderNSView { NeonBorderNSView() }
+
+    func updateNSView(_ view: NeonBorderNSView, context: Context) {
+        view.update(baseStops: baseStops, sparkStops: sparkStops, cornerRadius: cornerRadius)
+        view.setSpinning(spinning)
     }
 }
 
-private struct NeonRGBA {
+/// Three conic gradients (base stroke, blurred glow, sharp sparks), each masked to the card's
+/// border and turned by one shared repeating rotation.
+private final class NeonBorderNSView: NSView {
+    private static let period: CFTimeInterval = 3.2
+    private static let spinKey = "neon.spin"
+
+    private let base = NeonBorderNSView.ring(lineWidth: 1.35)
+    private let glow = NeonBorderNSView.ring(lineWidth: 1.8)
+    private let spark = NeonBorderNSView.ring(lineWidth: 1.35)
+    private let glowHost = CALayer()
+    private var cornerRadius: CGFloat = 0
+    private var spinning = false
+    private var lastBase: [NeonStop] = []
+    private var lastSpark: [NeonStop] = []
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerUsesCoreImageFilters = true
+        guard let root = layer else { return }
+        root.masksToBounds = false
+        glowHost.opacity = 0.55
+        if let blur = CIFilter(name: "CIGaussianBlur") {
+            blur.setValue(2.2, forKey: kCIInputRadiusKey)
+            glowHost.filters = [blur]
+        }
+        glowHost.masksToBounds = false
+        root.addSublayer(base.host)
+        glowHost.addSublayer(glow.host)
+        root.addSublayer(glowHost)
+        root.addSublayer(spark.host)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func update(baseStops: [NeonStop], sparkStops: [NeonStop], cornerRadius: CGFloat) {
+        guard baseStops != lastBase || sparkStops != lastSpark || cornerRadius != self.cornerRadius else { return }
+        lastBase = baseStops
+        lastSpark = sparkStops
+        self.cornerRadius = cornerRadius
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        Self.apply(baseStops, to: base.gradient)
+        Self.apply(sparkStops, to: glow.gradient)
+        Self.apply(sparkStops, to: spark.gradient)
+        CATransaction.commit()
+        needsLayout = true
+    }
+
+    func setSpinning(_ on: Bool) {
+        guard on != spinning else { return }
+        spinning = on
+        for ring in [base, glow, spark] {
+            if on {
+                let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+                spin.fromValue = 0
+                // Negative is clockwise in an unflipped layer, matching the SwiftUI version.
+                spin.toValue = -2 * Double.pi
+                spin.duration = Self.period
+                spin.repeatCount = .infinity
+                spin.isRemovedOnCompletion = false
+                ring.gradient.add(spin, forKey: Self.spinKey)
+            } else {
+                ring.gradient.removeAnimation(forKey: Self.spinKey)
+            }
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let bounds = self.bounds
+        let span = max(bounds.width, bounds.height) * 1.6
+        glowHost.frame = bounds
+        for ring in [base, glow, spark] {
+            ring.host.frame = bounds
+            ring.mask.frame = bounds
+            ring.mask.cornerRadius = cornerRadius
+            // Set bounds and position, not frame: frame is undefined under a rotation transform.
+            ring.gradient.bounds = CGRect(x: 0, y: 0, width: span, height: span)
+            ring.gradient.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        }
+        CATransaction.commit()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        for ring in [base, glow, spark] {
+            ring.gradient.contentsScale = scale
+            ring.mask.contentsScale = scale
+        }
+    }
+
+    private struct Ring {
+        let host: CALayer
+        let gradient: CAGradientLayer
+        let mask: CALayer
+    }
+
+    private static func ring(lineWidth: CGFloat) -> Ring {
+        let host = CALayer()
+        let gradient = CAGradientLayer()
+        gradient.type = .conic
+        // Flipped so the colours run clockwise from 3 o'clock, like SwiftUI's AngularGradient.
+        gradient.isGeometryFlipped = true
+        gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+        gradient.endPoint = CGPoint(x: 1, y: 0.5)
+        let mask = CALayer()
+        mask.borderWidth = lineWidth
+        mask.borderColor = CGColor(gray: 0, alpha: 1)
+        mask.cornerCurve = .continuous
+        host.mask = mask
+        host.addSublayer(gradient)
+        return Ring(host: host, gradient: gradient, mask: mask)
+    }
+
+    private static func apply(_ stops: [NeonStop], to layer: CAGradientLayer) {
+        layer.colors = stops.map(\.color.cgColor)
+        layer.locations = stops.map { NSNumber(value: $0.location) }
+    }
+}
+
+private struct NeonRGBA: Equatable {
     var r, g, b, a: Double
 
     static let clear = NeonRGBA(r: 0, g: 0, b: 0, a: 0)
     static let hot = NeonRGBA(r: 1, g: 1, b: 1, a: 0.55)
 
-    var color: Color { Color(.sRGB, red: r, green: g, blue: b, opacity: a) }
+    var cgColor: CGColor { CGColor(srgbRed: r, green: g, blue: b, alpha: a) }
 
     func opacity(_ value: Double) -> NeonRGBA {
         NeonRGBA(r: r, g: g, b: b, a: a * value)
@@ -537,12 +655,12 @@ private struct NeonRGBA {
     }
 }
 
-private struct NeonStop {
+private struct NeonStop: Equatable {
     var location: Double
     var color: NeonRGBA
 
     /// Sorts stops onto the loop and makes the colour at 0 match the colour at 1.
-    static func closed(_ raw: [NeonStop]) -> [Gradient.Stop] {
+    static func closed(_ raw: [NeonStop]) -> [NeonStop] {
         let wrapped = raw.map { stop in
             var location = stop.location.truncatingRemainder(dividingBy: 1)
             if location < 0 { location += 1 }
@@ -568,6 +686,18 @@ private struct NeonStop {
         } else {
             stops.append(NeonStop(location: 1, color: first.color))
         }
-        return stops.map { .init(color: $0.color.color, location: $0.location) }
+        return stops
+    }
+}
+
+private struct DashboardOnScreenKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// False while another page (Sessions, a stat page, Settings) covers the still-mounted dashboard.
+    var dashboardOnScreen: Bool {
+        get { self[DashboardOnScreenKey.self] }
+        set { self[DashboardOnScreenKey.self] = newValue }
     }
 }

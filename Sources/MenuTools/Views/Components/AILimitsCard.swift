@@ -75,6 +75,7 @@ private extension AIProvider {
 }
 
 private struct AIProviderRow: View {
+    @Environment(\.appTheme) private var theme
     let provider: AIProvider
     let usage: AIProviderUsage?
     let now: Date
@@ -112,7 +113,7 @@ private struct AIProviderRow: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, minHeight: 30)
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+        .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(6)))
         .help(tooltip)
     }
 

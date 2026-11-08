@@ -10,8 +10,10 @@ struct ClaudeSessionsCard: View {
         MacToolsCard(padding: 7) {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 VStack(alignment: .leading, spacing: 4) {
-                    SessionCardHeader(kind: .claude, tally: SessionStatusTally.claude(manager.sessions))
-                        .sessionStackReveal(index: 0, revealed: stackRevealed, base: stackIndexBase)
+                    SessionCardHeader(
+                        kind: .claude, tally: SessionStatusTally.claude(manager.sessions, finished: manager.finished)
+                    )
+                    .sessionStackReveal(index: 0, revealed: stackRevealed, base: stackIndexBase)
 
                     if manager.sessions.isEmpty {
                         Text("No live sessions")
@@ -30,7 +32,10 @@ struct ClaudeSessionsCard: View {
                                 uptime: session.uptime(now: context.date),
                                 details: SessionDetailFields.claude(session),
                                 tooltip: session.tooltip,
-                                revealHint: "Click to show its window"
+                                revealHint: "Click to show its window",
+                                done: manager.finished[session.id].map {
+                                    (manager.isFreshFinish(session.id), endedAgo($0.finishedAt, now: context.date))
+                                }
                             ) {
                                 manager.reveal(session)
                             }

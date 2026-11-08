@@ -39,6 +39,17 @@ private final class ZeroBlinkStatusBarButton: NSStatusBarButton {
         AppDelegate.sharedInstance?.statusButtonMouseUp()
     }
 
+    /// Keeps the live status lights over the image slot (left of any title).
+    override func layout() {
+        super.layout()
+        guard let lights = subviews.first(where: { $0 is StatusLightsView }) else { return }
+        let slot = (cell as? NSButtonCell)?.imageRect(forBounds: bounds) ?? bounds
+        let size = lights.frame.size
+        lights.frame = NSRect(
+            x: (slot.midX - size.width / 2).rounded(), y: (slot.midY - size.height / 2).rounded(),
+            width: size.width, height: size.height)
+    }
+
     // Spring-loaded: dragging files over the icon opens the panel; the drop itself happens inside the panel.
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         AppDelegate.sharedInstance?.statusButtonDragEntered()
@@ -106,11 +117,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastDarkMode: Bool?
     private var lastSessionAlert = false
     /// Trial switch. The old battery and symbol drawing is `updateLegacyStatusItemIcon`.
-    private static let sessionRingEnabled = true
-    private var lastRingInput: Bool?
-    private var lastRingRunning: Bool?
-    private var lastRingEnded: Bool?
-    private var lastRingDark: Bool?
+    /// Settings → General → "Status lights". Off draws the static icon in `updateLegacyStatusItemIcon`.
+    private var sessionRingEnabled: Bool { StatusLightSettings.shared.enabled }
+    /// Draws and animates the three session lights (style picked in Settings → General).
+    private var statusLights: StatusLightsAnimator?
     private var isMouseDownOnButton: Bool = false
     // Outside-press state machine: a press outside the panel only closes it on mouse up, and only if it was not a drag.
     private let dragPasteboard = NSPasteboard(name: .drag)
@@ -185,6 +195,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (button.cell as? NSButtonCell)?.highlightsBy = []
             (button.cell as? NSButtonCell)?.showsStateBy = []
             button.highlight(false)
+            statusLights = StatusLightsAnimator(
+                button: button,
+                isDark: { NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua })
             updateStatusItemIcon()
             button.imagePosition = .imageLeft
             button.action = #selector(togglePanel(_:))
@@ -195,7 +208,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Event-driven: battery / anti-sleep / network changes arrive via AppState, theme changes via KVO.
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.updateStatusItemIcon() }
+                MainActor.assumeIsolated {
+                    self?.statusLights?.refresh()
+                    self?.updateStatusItemIcon()
+                }
             }
         }
 
@@ -209,6 +225,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Session refreshes post this after the new rows are stored. objectWillChange fires in willSet,
         // which can paint the previous marks and then skip the real change until the panel opens.
+        StatusLightSettings.shared.$enabled
+            .dropFirst()
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in self?.statusLightsToggled(enabled) }
+            .store(in: &cancellables)
+
         sessionMarksObserver = NotificationCenter.default.addObserver(
             forName: .sessionMenuMarksChanged, object: nil, queue: .main
         ) { [weak self] _ in
@@ -243,6 +266,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The panel frame is driven by panelContentHeightChanged, not by hosting-view constraints.
         hostingView.sizingOptions = []
         panel.contentView = hostingView
+        // Catalog themes force the dark appearance so
+        // AppKit controls match the theme; Classic follows the system.
+        ThemeManager.shared.$theme
+            .map(\.appearance)
+            .removeDuplicates()
+            .sink { [weak panel] name in panel?.appearance = name.flatMap(NSAppearance.init(named:)) }
+            .store(in: &cancellables)
 
         if let existing = resignObserver {
             NotificationCenter.default.removeObserver(existing)
@@ -340,6 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updatePanelPosition()
         panelShownAt = ProcessInfo.processInfo.systemUptime
         isPanelOpen = true
+        if sessionRingEnabled { statusLights?.playOpen() }
         if activate {
             panel?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -480,80 +511,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusItemIcon() {
         guard let button = statusItem.button, let state = appState else { return }
-        if Self.sessionRingEnabled {
+        if sessionRingEnabled {
             updateSessionRingIcon(button: button, state: state)
             return
         }
         updateLegacyStatusItemIcon()
     }
 
-    /// Three capsules. Top is input, lower right is running, lower left is an unseen end.
+    /// Switching between the colour lights and the static icon. Both paths cache what they drew last,
+    /// so the caches are cleared to force a repaint.
+    private func statusLightsToggled(_ enabled: Bool) {
+        currentIconStyle = nil
+        lastSessionAlert = false
+        lastDarkMode = nil
+        lastBatteryPercentage = -1
+        statusItem.button?.toolTip = nil
+        statusLights?.setActive(enabled)
+        updateStatusItemIcon()
+        if enabled { statusLights?.playOpen() }
+    }
+
+    /// Three lights. Input, running and an unseen end; `StatusLightsAnimator` animates changes.
     private func updateSessionRingIcon(button: NSStatusBarButton, state: AppState) {
         let marks = state.sessionMarks
         let tip = marks.tooltip.isEmpty ? nil : marks.tooltip
         if button.toolTip != tip { button.toolTip = tip }
-        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let darkForCache = marks.isQuiet ? false : isDark
-        guard lastRingInput != marks.needsInput || lastRingRunning != marks.running || lastRingEnded != marks.endedUnseen
-            || lastRingDark != darkForCache
-        else { return }
-        let image = Self.sessionRing(
-            needsInput: marks.needsInput, running: marks.running, ended: marks.endedUnseen, isDark: isDark)
-        // Same-sized status images can stay dirty until this app activates. Bounce through nil and
-        // give the bitmap a unique name so AppKit cannot reuse the previous cached composition.
-        button.image = nil
-        button.image = image
-        button.needsDisplay = true
-        button.displayIfNeeded()
-        lastRingInput = marks.needsInput
-        lastRingRunning = marks.running
-        lastRingEnded = marks.endedUnseen
-        lastRingDark = darkForCache
-    }
-
-    /// Bitmap, same as the old alert dot. A drawing-handler image is composited as a template until this app activates,
-    /// so an orange segment stayed invisible until the panel opened.
-    private static func sessionRing(needsInput: Bool, running: Bool, ended: Bool, isDark: Bool) -> NSImage {
-        let side: CGFloat = 18
-        let quiet = !needsInput && !running && !ended
-        let image = NSImage(size: NSSize(width: side, height: side))
-        image.lockFocus()
-        if let ctx = NSGraphicsContext.current?.cgContext {
-            ctx.setLineWidth(3.3)
-            ctx.setLineCap(.round)
-            let center = CGPoint(x: side / 2, y: side / 2)
-            let radius: CGFloat = 5.85
-            func draw(midDegrees: CGFloat, on: Bool, active: NSColor) {
-                let color: NSColor
-                if on {
-                    color = active
-                } else if quiet {
-                    color = .black
-                } else {
-                    color = isDark ? .white : .black
-                }
-                ctx.setStrokeColor(color.cgColor)
-                let mid = midDegrees * CGFloat.pi / 180
-                let half: CGFloat = 27 * CGFloat.pi / 180
-                ctx.beginPath()
-                ctx.addArc(
-                    center: center, radius: radius, startAngle: mid - half, endAngle: mid + half, clockwise: false)
-                ctx.strokePath()
-            }
-            // 0° is east. Top is input, lower right is running, lower left is ended.
-            draw(midDegrees: 90, on: needsInput, active: NSColor(srgbRed: 1.0, green: 0.624, blue: 0.039, alpha: 1))
-            draw(midDegrees: -30, on: running, active: NSColor(srgbRed: 0.188, green: 0.820, blue: 0.345, alpha: 1))
-            draw(midDegrees: 210, on: ended, active: NSColor(srgbRed: 0.039, green: 0.518, blue: 1.0, alpha: 1))
-        }
-        image.unlockFocus()
-        image.isTemplate = quiet
-        // Unique name so NSStatusItem cannot keep showing a stale same-sized bitmap while inactive.
-        _ = image.setName(
-            NSImage.Name(
-                "mt.ring.\(needsInput ? 1 : 0)\(running ? 1 : 0)\(ended ? 1 : 0)\(isDark ? 1 : 0)."
-                    + UUID().uuidString))
-        image.accessibilityDescription = "MenuTools"
-        return image
+        statusLights?.update(input: marks.needsInput, running: marks.running, ended: marks.endedUnseen)
     }
 
     /// Battery bars and symbol styles. Used while `sessionRingEnabled` is false.

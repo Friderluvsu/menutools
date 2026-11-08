@@ -22,7 +22,7 @@ It lives as a status item. Clicking the icon opens a custom `NSPanel` (not `NSPo
 | Live sessions | Claude Code, Cursor agents, Codex CLI, Antigravity chats + notifications |
 | Shelf | Temporary file drop shelf while dragging |
 | Media converter | FFmpeg / sips (video, audio, GIF, images) |
-| Anti-sleep | `IOPMAssertion` + `caffeinate` + optional lid-sleep block (`pmset`) |
+| Anti-sleep | Awake (`IOPMAssertion`) and Closed-lid (`pmset disablesleep` via helper, battery guard); sessions resume after relaunch |
 | Network | VanyaVPN (`scutil`) + SpoofDPI SOCKS proxy |
 | Low Power Mode | Via SMC helper / `pmset` |
 | Clipboard | History + ⌥⌘V HUD |
@@ -115,7 +115,7 @@ UI layout check: `make preview`, then **Read** `build/preview-dashboard.png`, `b
 1. `main.swift` (MainActor) boots `NSApplication` + `AppDelegate`.
 2. Status item is created at launch; the **panel and SwiftUI graph are built on first open** (idle footprint ~11 MB).
 3. `AppState` owns feature managers. `onPopoverWillShow` / `onPopoverDidClose` start and stop panel-scoped polling.
-4. SIGTERM is routed to `NSApp.terminate` so `applicationWillTerminate` can restore `pmset disablesleep`. `caffeinate -w <pid>` dies with the process.
+4. SIGTERM is routed to `NSApp.terminate` so `applicationWillTerminate` can restore `pmset disablesleep`. Power assertions die with the process.
 
 ### Panel (critical AppKit)
 
@@ -134,7 +134,7 @@ UI layout check: `make preview`, then **Read** `build/preview-dashboard.png`, `b
 
 ### Dashboard order (no scroll on main dashboard)
 
-Header → metrics (CPU, GPU, RAM, TEMP, NET, BAT, FAN, DISK; LAN/WAN copy) → AI Limits → session cards **or** Sessions summary → toggles (Awake, Low Power, VPN, SpoofDPI) → converter → shelf → clipboard (3 rows).
+Header → metrics (CPU, GPU, RAM, TEMP, NET, BAT, FAN, DISK; LAN/WAN copy) → AI Limits → session cards **or** Sessions summary → toggles (Awake, Lid, Low Power, VPN, SpoofDPI) → converter → shelf → clipboard (3 rows).
 
 - Stat tiles open detail pages; **X** returns. FAN detail is fan control.
 - If live+ended session rows across providers **> 3**, show one **Sessions** summary instead of inline cards.
@@ -204,7 +204,8 @@ Run: `build/MenuTools.app/Contents/MacOS/MenuTools <flag>`
 
 | Flag | Purpose |
 |---|---|
-| `--render-preview <png> […]` | Offscreen panel PNG; optional `--settings`, `--sessions`, `--anti-sleep-picker`, `--fan-picker`, `--sample-tasks`, `--open-session-detail <id>` |
+| `--render-status-lights <png>` | Every menu bar status-light style and its key animation frames, as one sheet |
+| `--render-preview <png> […]` | Offscreen panel PNG; optional `--settings`, `--sessions`, `--anti-sleep-picker`, `--fan-picker`, `--sample-tasks`, `--open-session-detail <id>`, `--theme <id>`, `--egg-at <seconds>` |
 | `--render-battery-icons <dir>` | Battery style PNGs |
 | `--window-diagnose` | Accessibility + event tap creatable? |
 | `--stat-diagnose` | CPU clusters, load, memory pressure, GPU, top processes (no IPs) |

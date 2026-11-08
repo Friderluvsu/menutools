@@ -15,23 +15,17 @@ public final class SMCHelperManager: ObservableObject {
     }
 
     public func checkHelperInstalled() {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: Self.installedHelperPath) else {
-            self.isHelperInstalled = false
-            return
-        }
+        isHelperInstalled = Self.isHelperInstalledSync
+    }
 
-        do {
-            let attrs = try fm.attributesOfItem(atPath: Self.installedHelperPath)
-            let posixPerms = (attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0
-            let ownerID = (attrs[.ownerAccountID] as? NSNumber)?.intValue ?? -1
-
-            // Needs to be owned by root (UID 0) and have setuid (04000) or executable permissions
-            let isSetuidRoot = (ownerID == 0) && ((posixPerms & 0o4000) != 0)
-            self.isHelperInstalled = isSetuidRoot || (ownerID == 0 && (posixPerms & 0o111) != 0)
-        } catch {
-            self.isHelperInstalled = false
+    /// Root-owned and setuid (or executable): pmset can be changed without an admin prompt.
+    nonisolated public static var isHelperInstalledSync: Bool {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: installedHelperPath) else {
+            return false
         }
+        let posixPerms = (attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0
+        let ownerID = (attrs[.ownerAccountID] as? NSNumber)?.intValue ?? -1
+        return ownerID == 0 && ((posixPerms & 0o4000) != 0 || (posixPerms & 0o111) != 0)
     }
 
     public var bundledHelperPath: String? {

@@ -146,7 +146,7 @@ final class AppState: ObservableObject {
     @Published var isShowingSearch: Bool = false
     @Published var globalSearchQuery: String = ""
 
-    let antiSleep = AntiSleepManager()
+    let antiSleep: AntiSleepManager
     let network = NetworkBypassManager()
     let clipboard = ClipboardManager()
     let iMessage = IMessageHelper()
@@ -166,6 +166,8 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     init(previewMode: Bool = false) {
+        // Preview renders must never take power assertions or touch pmset.
+        antiSleep = AntiSleepManager(previewMode: previewMode)
         converter = MediaConverterManager(requestNotifications: !previewMode)
         aiLimits = AILimitsManager(previewMode: previewMode)
         claudeSessions = ClaudeSessionsManager(previewMode: previewMode)
@@ -281,6 +283,7 @@ final class AppState: ObservableObject {
 
     /// Clear the menu-bar blue for ended rows the user can see. The blue row lasts until the panel closes.
     func acknowledgeEndedSessions() {
+        claudeSessions.acknowledgeFinished()
         cursorSessions.acknowledgeEnded()
         codexSessions.acknowledgeEnded()
         antigravitySessions.acknowledgeEnded()
@@ -309,7 +312,8 @@ final class AppState: ObservableObject {
             add(needsInput: session.needsInput, isRunning: session.status == "running")
         }
         marks.endedCount =
-            cursorSessions.ended.filter { !$0.seen }.count + codexSessions.ended.filter { !$0.seen }.count
+            claudeSessions.finished.values.filter { !$0.seen }.count
+            + cursorSessions.ended.filter { !$0.seen }.count + codexSessions.ended.filter { !$0.seen }.count
             + antigravitySessions.ended.filter { !$0.seen }.count
         return marks
     }

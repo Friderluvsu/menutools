@@ -18,6 +18,7 @@ struct PopoverContentView: View {
     @State private var showStat: Bool
     @State private var statOpacity: Double = 0
     @State private var showAntiSleepPicker: Bool
+    @State private var antiSleepPickerMode: AntiSleepManager.Mode = .awake
     @State private var visibleHeight: CGFloat = 0
     @State private var dashboardHeight: CGFloat = 0
     @State private var sessionsHeight: CGFloat = 0
@@ -36,6 +37,7 @@ struct PopoverContentView: View {
         showSessions: Bool = false,
         showStat: StatTopic? = nil,
         showAntiSleepPicker: Bool = false,
+        antiSleepPickerMode: AntiSleepManager.Mode = .awake,
         openSessionDetail: String? = nil,
         onHeightChange: (@MainActor (CGFloat) -> Void)? = nil
     ) {
@@ -53,9 +55,14 @@ struct PopoverContentView: View {
         _statMounted = State(initialValue: showStat != nil)
         _statOpacity = State(initialValue: showStat != nil ? 1 : 0)
         _showAntiSleepPicker = State(initialValue: showAntiSleepPicker)
+        _antiSleepPickerMode = State(initialValue: antiSleepPickerMode)
     }
 
     var body: some View {
+        ThemeHost { panel }
+    }
+
+    private var panel: some View {
         VStack(spacing: 0) {
             PanelHeader(
                 appState: appState,
@@ -77,7 +84,8 @@ struct PopoverContentView: View {
         .reportsPanelHeight()
         .frame(width: MacToolsTheme.popoverWidth)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(.ultraThinMaterial)
+        .background(PanelBackdrop())
+        .overlay(ThemeEasterEggLayer())
         .overlay(alignment: .bottom) {
             if let copiedNotice {
                 Text(copiedNotice)
@@ -91,14 +99,12 @@ struct PopoverContentView: View {
         }
         .overlay {
             if showAntiSleepPicker {
-                AntiSleepPickerOverlay(antiSleep: appState.antiSleep) { showAntiSleepPicker = false }
+                AntiSleepPickerOverlay(antiSleep: appState.antiSleep, mode: antiSleepPickerMode) {
+                    showAntiSleepPicker = false
+                }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
+        .modifier(PanelFrame())
         .onPreferenceChange(PanelHeightKey.self) { height in
             MainActor.assumeIsolated { onHeightChange?(height) }
         }
@@ -158,7 +164,10 @@ struct PopoverContentView: View {
             DashboardView(
                 appState: appState,
                 toast: showToast,
-                openAntiSleepPicker: { showAntiSleepPicker = true },
+                openAntiSleepPicker: { mode in
+                    antiSleepPickerMode = mode
+                    showAntiSleepPicker = true
+                },
                 openFanPicker: { openStat(.fan) },
                 openSessions: openSessions,
                 openStat: openStat
@@ -166,6 +175,7 @@ struct PopoverContentView: View {
             .padding(MacToolsTheme.outerPadding)
             .fixedSize(horizontal: false, vertical: true)
             .reportsSessionPageHeight("dashboard")
+            .environment(\.dashboardOnScreen, !showSessions && !showStat && !showSettings)
             .opacity(1 - max(sessionsOpacity, statOpacity))
             .animation(SessionDashboardLayout.pageAnimation, value: sessionsOpacity)
             .animation(SessionDashboardLayout.pageAnimation, value: statOpacity)
@@ -382,12 +392,14 @@ struct PopoverContentView: View {
 
 /// Title + system actions as icon buttons. Observes AppState only for the icon style.
 private struct PanelHeader: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var appState: AppState
     @ObservedObject var systemUtils: SystemUtilsManager
     let isSettings: Bool
     let isSessions: Bool
     var statTitle: String?
     let onTrailing: () -> Void
+    @State private var secretTaps: [Date] = []
 
     private var showsBack: Bool { isSettings || isSessions || statTitle != nil }
 
@@ -395,12 +407,17 @@ private struct PanelHeader: View {
         HStack(spacing: 6) {
             Image(systemName: appState.menuBarIconStyle.symbolName)
                 .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.isFeatured ? AnyShapeStyle(.secondary) : AnyShapeStyle(theme.accent))
                 .frame(width: 22, height: 22)
-                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                .background(theme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: theme.radius(6)))
+                .contentShape(Rectangle())
+                .onTapGesture(perform: countSecretTap)
 
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
+                .italic(theme.titleItalic && !showsBack)
+                .tracking(showsBack ? 0 : theme.titleTracking)
+                .lineLimit(1)
 
             Spacer(minLength: 6)
 
@@ -429,11 +446,43 @@ private struct PanelHeader: View {
         if isSettings { return "Settings" }
         if let statTitle { return statTitle }
         if isSessions { return "Sessions" }
-        return "MenuTools"
+        return theme.title
+    }
+
+    /// Five quick clicks on the header icon play the theme's easter egg.
+    private func countSecretTap() {
+        let now = Date()
+        secretTaps = secretTaps.filter { now.timeIntervalSince($0) < 2 } + [now]
+        if secretTaps.count >= 5 {
+            secretTaps = []
+            ThemeManager.shared.playEasterEgg()
+        }
+    }
+}
+
+/// Panel background: material and/or theme gradient plus the static texture.
+private struct PanelBackdrop: View {
+    @Environment(\.appTheme) private var theme
+
+    var body: some View {
+        ThemeBackdrop(theme: theme)
+    }
+}
+
+/// Outer clip and hairline in the theme's corner and stroke colour.
+private struct PanelFrame: ViewModifier {
+    @Environment(\.appTheme) private var theme
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: max(4, theme.radius(14)), style: .continuous)
+        content
+            .clipShape(shape)
+            .overlay(shape.stroke(theme.panelStroke, lineWidth: theme.isFeatured ? 0.5 : 1))
     }
 }
 
 private struct HeaderIconButton: View {
+    @Environment(\.appTheme) private var theme
     let symbol: String
     let help: String
     let action: () -> Void
@@ -444,7 +493,7 @@ private struct HeaderIconButton: View {
                 .font(.system(size: 11, weight: .regular))
                 .foregroundStyle(.secondary)
                 .frame(width: 24, height: 22)
-                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                .background(theme.controlFill, in: RoundedRectangle(cornerRadius: theme.radius(6)))
                 .contentShape(Rectangle())
                 .hoverHighlight(cornerRadius: 6)
         }
@@ -456,16 +505,30 @@ private struct HeaderIconButton: View {
 
 // MARK: - Dashboard
 
+/// Sections render in the user's order (Settings → Look → Layout); hidden ones are skipped.
+/// Observes only the layout store, which changes when the user rearranges.
 private struct DashboardView: View {
     let appState: AppState
     let toast: (String) -> Void
-    let openAntiSleepPicker: () -> Void
+    let openAntiSleepPicker: (AntiSleepManager.Mode) -> Void
     let openFanPicker: () -> Void
     let openSessions: () -> Void
     let openStat: (StatTopic) -> Void
+    @ObservedObject private var layout = DashboardLayoutStore.shared
 
     var body: some View {
         VStack(spacing: MacToolsTheme.sectionSpacing) {
+            ForEach(layout.visible) { section in
+                view(for: section)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func view(for section: DashboardSection) -> some View {
+        switch section {
+        case .metrics:
             MetricsCard(
                 monitor: appState.systemMonitor,
                 fanControl: appState.fanControl,
@@ -474,7 +537,9 @@ private struct DashboardView: View {
                 openStat: openStat,
                 toast: toast
             )
+        case .aiLimits:
             AILimitsCard(manager: appState.aiLimits)
+        case .sessions:
             DashboardSessionsSection(
                 claude: appState.claudeSessions,
                 cursor: appState.cursorSessions,
@@ -482,17 +547,21 @@ private struct DashboardView: View {
                 antigravity: appState.antigravitySessions,
                 openSessions: openSessions
             )
+        case .toggles:
             HStack(spacing: MacToolsTheme.sectionSpacing) {
-                AntiSleepToggle(antiSleep: appState.antiSleep, openPicker: openAntiSleepPicker)
+                AntiSleepToggle(antiSleep: appState.antiSleep) { openAntiSleepPicker(.awake) }
+                ClosedLidToggle(antiSleep: appState.antiSleep) { openAntiSleepPicker(.lid) }
                 LowPowerToggle(battery: appState.battery)
                 VPNToggle(network: appState.network, monitor: appState.systemMonitor)
                 SpoofToggle(network: appState.network, monitor: appState.systemMonitor)
             }
+        case .converter:
             ConverterCard(converter: appState.converter)
+        case .shelf:
             ShelfSection(shelf: ShelfManager.shared)
+        case .clipboard:
             ClipboardCard(clipboard: appState.clipboard, toast: toast)
         }
-        .frame(maxWidth: .infinity)
     }
 }
 
@@ -611,6 +680,7 @@ private struct MetricButton: View {
 }
 
 private struct MetricTile: View {
+    @Environment(\.appTheme) private var theme
     let title: String
     let value: String
     var help: String?
@@ -637,8 +707,8 @@ private struct MetricTile: View {
         .padding(.horizontal, 7)
         .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
         .background(
-            (tint ?? Color.white).opacity(tint == nil ? 0.035 : 0.10),
-            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            tint.map { $0.opacity(0.10) } ?? theme.tileFill,
+            in: RoundedRectangle(cornerRadius: theme.radius(6), style: .continuous)
         )
         .contentShape(Rectangle())
         .help(help ?? "")
@@ -646,6 +716,7 @@ private struct MetricTile: View {
 }
 
 private struct FanTile: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var fanControl: FanControlManager
     let action: () -> Void
 
@@ -655,7 +726,7 @@ private struct FanTile: View {
                 title: "FAN",
                 value: fanControl.hasFans ? fanControl.fanDisplayShort : "—",
                 help: fanControl.hasFans ? "Fan: \(fanControl.statusText)" : "No fans",
-                tint: fanControl.hasFans ? .teal : nil
+                tint: fanControl.hasFans ? theme.charts.fan : nil
             )
             .hoverHighlight(cornerRadius: 6)
         }
@@ -686,6 +757,7 @@ private struct BatteryMetricButton: View {
 }
 
 private struct IPButton: View {
+    @Environment(\.appTheme) private var theme
     let label: String
     let value: String
     let action: () -> Void
@@ -707,7 +779,7 @@ private struct IPButton: View {
             }
             .padding(.horizontal, 7)
             .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22)
-            .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(6), style: .continuous))
             .contentShape(Rectangle())
             .hoverHighlight(cornerRadius: 6)
         }
@@ -720,6 +792,7 @@ private struct IPButton: View {
 // MARK: - Quick toggles (each observes only its own manager)
 
 private struct QuickToggle: View {
+    @Environment(\.appTheme) private var theme
     let title: String
     let icon: String
     let color: Color
@@ -748,12 +821,12 @@ private struct QuickToggle: View {
             .foregroundStyle(isActive ? color : .secondary)
             .frame(maxWidth: .infinity, minHeight: 38, maxHeight: 38)
             .background(
-                isActive ? color.opacity(0.12) : MacToolsTheme.cardBackground,
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                isActive ? color.opacity(0.12) : theme.cardFill,
+                in: RoundedRectangle(cornerRadius: theme.radius(8), style: .continuous)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(isActive ? color.opacity(0.35) : MacToolsTheme.borderColor)
+                RoundedRectangle(cornerRadius: theme.radius(8), style: .continuous)
+                    .strokeBorder(isActive ? color.opacity(0.35) : theme.cardStroke, lineWidth: theme.strokeWidth)
             )
             .contentShape(Rectangle())
             .hoverHighlight(cornerRadius: 8)
@@ -764,12 +837,33 @@ private struct QuickToggle: View {
     }
 }
 
+/// Awake: no idle sleep, display kept on (optional). Closing the lid still sleeps.
 private struct AntiSleepToggle: View {
     @ObservedObject var antiSleep: AntiSleepManager
     let openPicker: () -> Void
 
     var body: some View {
-        if !antiSleep.isActive && antiSleep.sleepRestoreFailed {
+        QuickToggle(
+            title: antiSleep.awakeOn ? antiSleep.statusText : "Awake",
+            icon: antiSleep.lastError == nil ? "cup.and.saucer" : "exclamationmark.triangle",
+            color: .orange,
+            isActive: antiSleep.awakeOn,
+            help: antiSleep.lastError
+                ?? (antiSleep.awakeOn ? "Awake on · click to stop" : "Keep the Mac and screen awake"),
+            action: {
+                if antiSleep.awakeOn { antiSleep.deactivate() } else { openPicker() }
+            }
+        )
+    }
+}
+
+/// Closed-lid: keeps running with the lid closed (pmset disablesleep), stops at the battery guard.
+private struct ClosedLidToggle: View {
+    @ObservedObject var antiSleep: AntiSleepManager
+    let openPicker: () -> Void
+
+    var body: some View {
+        if !antiSleep.lidOn && antiSleep.sleepRestoreFailed {
             // Off, but pmset still blocks sleep: stay highlighted until the restore succeeds.
             QuickToggle(
                 title: "Retry",
@@ -781,16 +875,25 @@ private struct AntiSleepToggle: View {
             )
         } else {
             QuickToggle(
-                title: antiSleep.isActive ? (antiSleep.remainingSeconds > 0 ? antiSleep.statusText : "On") : "Awake",
-                icon: antiSleep.lastError == nil ? "cup.and.saucer" : "exclamationmark.triangle",
-                color: .orange,
-                isActive: antiSleep.isActive,
-                help: antiSleep.lastError ?? (antiSleep.isActive ? "Anti-Sleep on · click to stop" : "Anti-Sleep"),
+                title: antiSleep.lidOn ? antiSleep.lidStatusText : "Lid",
+                icon: antiSleep.lidError == nil || antiSleep.lidOn ? "laptopcomputer" : "exclamationmark.triangle",
+                color: .indigo,
+                isActive: antiSleep.lidOn,
+                isWorking: antiSleep.lidWorking,
+                help: help,
                 action: {
-                    if antiSleep.isActive { antiSleep.deactivate() } else { openPicker() }
+                    if antiSleep.lidOn { antiSleep.deactivateLid() } else { openPicker() }
                 }
             )
         }
+    }
+
+    private var help: String {
+        if antiSleep.lidOn {
+            let guardText = antiSleep.lidBatteryGuard > 0 ? " · stops at \(antiSleep.lidBatteryGuard)%" : ""
+            return "Closed-lid on\(guardText) · click to stop"
+        }
+        return antiSleep.lidError ?? "Keep running with the lid closed"
     }
 }
 
@@ -852,6 +955,7 @@ private struct SpoofToggle: View {
 // MARK: - Media converter
 
 private struct ConverterCard: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var converter: MediaConverterManager
     @State private var isDropTargeted = false
 
@@ -890,8 +994,8 @@ private struct ConverterCard: View {
                         .foregroundStyle(isSelected ? Color.primary : Color.secondary)
                         .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22)
                         .background(
-                            isSelected ? Color.white.opacity(0.16) : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            isSelected ? theme.accent.opacity(theme.isFeatured ? 0 : 0.22) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: theme.radius(5), style: .continuous)
                         )
                         .contentShape(Rectangle())
                 }
@@ -901,8 +1005,8 @@ private struct ConverterCard: View {
         }
         .padding(2)
         .frame(width: 186)
-        .background(MacToolsTheme.controlBackground, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(MacToolsTheme.borderColor))
+        .background(theme.controlFill, in: RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous).strokeBorder(theme.cardStroke))
     }
 
     private var presetMenu: some View {
@@ -927,8 +1031,8 @@ private struct ConverterCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 7)
         .frame(minHeight: 26, maxHeight: 26)
-        .background(MacToolsTheme.controlBackground, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(MacToolsTheme.borderColor))
+        .background(theme.controlFill, in: RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous).strokeBorder(theme.cardStroke))
         .help(currentPreset)
     }
 
@@ -968,13 +1072,13 @@ private struct ConverterCard: View {
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, minHeight: 28, maxHeight: 28)
             .background(
-                isDropTargeted ? Color.accentColor.opacity(0.10) : Color.white.opacity(0.03),
-                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                isDropTargeted ? Color.accentColor.opacity(0.10) : theme.tileFill,
+                in: RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous)
                     .strokeBorder(
-                        isDropTargeted ? Color.accentColor.opacity(0.7) : Color.white.opacity(0.10),
+                        isDropTargeted ? Color.accentColor.opacity(0.7) : theme.cardStroke,
                         style: StrokeStyle(lineWidth: 1, dash: [4]))
             )
             .contentShape(Rectangle())
@@ -1068,6 +1172,7 @@ private struct ConverterCard: View {
 }
 
 private struct CompactTaskRow: View {
+    @Environment(\.appTheme) private var theme
     let task: MediaTask
     let onRemove: () -> Void
 
@@ -1106,7 +1211,7 @@ private struct CompactTaskRow: View {
         }
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22)
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(6), style: .continuous))
     }
 
     @ViewBuilder
@@ -1192,6 +1297,7 @@ private struct ClipboardCard: View {
 }
 
 private struct ClipRow: View {
+    @Environment(\.appTheme) private var theme
     let index: Int
     let item: ClipboardItem
     let action: () -> Void
@@ -1221,7 +1327,7 @@ private struct ClipRow: View {
             }
             .padding(.horizontal, 6)
             .frame(maxWidth: .infinity, minHeight: 21, maxHeight: 21)
-            .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(6), style: .continuous))
             .contentShape(Rectangle())
             .hoverHighlight(cornerRadius: 6)
         }
@@ -1233,8 +1339,12 @@ private struct ClipRow: View {
 // MARK: - Anti-Sleep picker
 
 private struct AntiSleepPickerOverlay: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var antiSleep: AntiSleepManager
+    let mode: AntiSleepManager.Mode
     let onClose: () -> Void
+
+    private var isLid: Bool { mode == .lid }
 
     var body: some View {
         ZStack {
@@ -1245,17 +1355,17 @@ private struct AntiSleepPickerOverlay: View {
             MacToolsCard(padding: 10, cornerRadius: 12) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        Image(systemName: "cup.and.saucer")
+                        Image(systemName: isLid ? "laptopcomputer" : "cup.and.saucer")
                             .font(.system(size: 12, weight: .regular))
-                            .foregroundStyle(.orange)
-                        Text("Keep awake")
+                            .foregroundStyle(isLid ? Color.indigo : Color.orange)
+                        Text(isLid ? "Closed-lid" : "Keep awake")
                             .font(.system(size: 12, weight: .semibold))
                         Spacer()
                         Button(action: onClose) {
                             Image(systemName: "xmark")
                                 .font(.system(size: 9, weight: .medium))
                                 .frame(width: 20, height: 20)
-                                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                                .background(theme.controlFill, in: RoundedRectangle(cornerRadius: 6))
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -1265,14 +1375,18 @@ private struct AntiSleepPickerOverlay: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 3), spacing: 5) {
                         ForEach(AntiSleepManager.durations, id: \.seconds) { duration in
                             Button {
-                                antiSleep.activate(duration: duration.seconds)
+                                if isLid {
+                                    antiSleep.activateLid(duration: duration.seconds)
+                                } else {
+                                    antiSleep.activate(duration: duration.seconds)
+                                }
                                 onClose()
                             } label: {
                                 Text(duration.label)
                                     .font(.system(size: 11, weight: .medium))
                                     .frame(maxWidth: .infinity, minHeight: 30)
-                                    .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
-                                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white.opacity(0.06)))
+                                    .background(theme.controlFill, in: RoundedRectangle(cornerRadius: 7))
+                                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(theme.cardStroke))
                                     .contentShape(Rectangle())
                                     .hoverHighlight(cornerRadius: 7)
                             }
@@ -1281,20 +1395,35 @@ private struct AntiSleepPickerOverlay: View {
                         }
                     }
 
-                    Toggle("Keep display awake", isOn: $antiSleep.preventDisplaySleep)
-                        .font(.system(size: 10))
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
+                    if isLid {
+                        Text(lidNote)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Toggle("Keep display awake", isOn: $antiSleep.preventDisplaySleep)
+                            .font(.system(size: 10))
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                    }
                 }
             }
             .frame(width: 260)
             .background(
-                Color(nsColor: .windowBackgroundColor).opacity(0.96),
-                in: RoundedRectangle(cornerRadius: 12)
+                ThemeBackdrop(theme: theme)
+                    .background(Color(nsColor: .windowBackgroundColor).opacity(0.96))
+                    .clipShape(RoundedRectangle(cornerRadius: theme.radius(12)))
             )
             .shadow(color: .black.opacity(0.28), radius: 18, y: 6)
             .fixedSize(horizontal: false, vertical: true)
             .reportsPanelHeight(extra: 24)
         }
+    }
+
+    private var lidNote: String {
+        let guardText =
+            antiSleep.lidBatteryGuard > 0
+            ? "Stops at \(antiSleep.lidBatteryGuard)% battery." : "No battery stop."
+        return "Runs with the lid closed, on battery too. \(guardText) Keep it out of a closed bag."
     }
 }

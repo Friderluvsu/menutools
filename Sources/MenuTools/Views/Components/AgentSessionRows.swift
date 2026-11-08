@@ -65,10 +65,15 @@ struct SessionStatusTally: Equatable {
         )
     }
 
-    static func claude(_ sessions: [ClaudeSession]) -> SessionStatusTally {
+    /// A live session whose last run finished counts as ended (blue), like another app's Ended row.
+    static func claude(_ sessions: [ClaudeSession], finished: [String: ClaudeFinish] = [:]) -> SessionStatusTally {
         var tally = SessionStatusTally()
         for session in sessions {
-            tally.add(.live(needsInput: session.needsInput, isRunning: session.isWorking))
+            if finished[session.id] != nil, !session.isWorking, !session.needsInput {
+                tally.add(.ended)
+            } else {
+                tally.add(.live(needsInput: session.needsInput, isRunning: session.isWorking))
+            }
         }
         return tally
     }
@@ -161,23 +166,41 @@ struct AgentLiveRow: View {
     let details: [SessionDetailField]
     let tooltip: String
     var revealHint: String = "Click to show this project"
+    /// Claude: the session is still open but its last run finished. Shown as Done, blue while unchecked.
+    var done: (fresh: Bool, when: String)? = nil
     let onReveal: () -> Void
 
     var body: some View {
-        let tone = SessionStatusTone.live(needsInput: needsInput, isRunning: isRunning)
-        AgentSessionRow(
-            expansionID: expansionID,
-            name: name,
-            statusTitle: statusTitle,
-            statusColor: tone.color,
-            dotColor: tone.color,
-            project: project,
-            uptime: uptime,
-            details: details,
-            fill: tone.rowFill,
-            helpText: tooltip + "\n" + revealHint,
-            onReveal: onReveal
-        )
+        if let done, !needsInput, !isRunning {
+            AgentSessionRow(
+                expansionID: expansionID,
+                name: name,
+                statusTitle: "Done",
+                statusColor: SessionStatusTone.ended.color,
+                dotColor: done.fresh ? SessionStatusTone.ended.color : Color.secondary,
+                project: project,
+                uptime: done.when,
+                details: details,
+                fill: done.fresh ? SessionStatusTone.ended.rowFill : SessionStatusTone.idle.rowFill,
+                helpText: tooltip + "\nFinished " + done.when + "\n" + revealHint,
+                onReveal: onReveal
+            )
+        } else {
+            let tone = SessionStatusTone.live(needsInput: needsInput, isRunning: isRunning)
+            AgentSessionRow(
+                expansionID: expansionID,
+                name: name,
+                statusTitle: statusTitle,
+                statusColor: tone.color,
+                dotColor: tone.color,
+                project: project,
+                uptime: uptime,
+                details: details,
+                fill: tone.rowFill,
+                helpText: tooltip + "\n" + revealHint,
+                onReveal: onReveal
+            )
+        }
     }
 }
 
