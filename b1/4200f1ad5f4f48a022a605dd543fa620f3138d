@@ -1,0 +1,27 @@
+Sources/MenuTools/Features/AntigravitySessions/AntigravitySession.swift
+  s_bb3d1f479c2e58::t_6ba92afbf1b1ed 102-111,126,129-147,254-256,259-276
+Sources/MenuTools/Features/CursorSessions/CursorSession.swift
+  s_bb3d1f479c2e58::t_8a543070d7aa7c 117,122-129,161-183
+Sources/MenuTools/Features/CursorSessions/CursorSessionsManager.swift
+  s_bb3d1f479c2e58::t_cc480987f7e7c8 78
+Sources/MenuTools/Features/SystemMonitor/ProcessLookup.swift
+  s_bb3d1f479c2e58::t_5aa0721f0a9e39 7-11,57-58,60,71-107
+docs/knowledge-base/performance.md
+  s_bb3d1f479c2e58::t_5ffef9cb10b519 88-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "b14200f1ad5f4f48a022a605dd543fa620f3138d",
+  "prompts": {},
+  "sessions": {
+    "s_bb3d1f479c2e58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5cedeed4-542d-4489-b5d0-325fae3ed56d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    }
+  }
+}
