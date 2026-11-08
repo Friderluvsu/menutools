@@ -99,7 +99,16 @@ enum AntigravitySessionFiles {
     /// `live` and `facts` are nil when the database could not be read. An empty list means the read succeeded and nothing is live.
     static func scan() -> (appRunning: Bool, live: [AntigravitySession]?, facts: [AntigravityFact]?) {
         let running = ProcessLookup.isLiveAntigravity()
-        guard running else { return (false, [], []) }
+        guard running else {
+            lastScan = nil
+            return (false, [], [])
+        }
+        // The result depends only on the database. `instr(raw_summary, …)` reads every summary blob,
+        // so an unchanged file (and WAL) reuses the last good read.
+        let signature = fileSignature()
+        if let lastScan, let signature, lastScan.signature == signature {
+            return (true, lastScan.live, lastScan.facts)
+        }
         let db = AntigravitySummaryDB()
         guard db.open() else { return (true, nil, nil) }
         defer { db.close() }
@@ -114,7 +123,27 @@ enum AntigravitySessionFiles {
             if lhs.needsInput != rhs.needsInput { return lhs.needsInput }
             return (lhs.startedAt ?? .distantPast) > (rhs.startedAt ?? .distantPast)
         }
+        lastScan = signature.map { (signature: $0, live: live, facts: facts) }
         return (true, live, facts)
+    }
+
+    private static var lastScan: (signature: [Double], live: [AntigravitySession], facts: [AntigravityFact])?
+
+    /// Modification time and size of the database and its WAL. nil when the database is missing.
+    private static func fileSignature() -> [Double]? {
+        let path = databaseURL.path
+        var result: [Double] = []
+        for (index, file) in [path, path + "-wal"].enumerated() {
+            var info = stat()
+            guard stat(file, &info) == 0 else {
+                if index == 0 { return nil }
+                result += [0, 0]
+                continue
+            }
+            let mtime = Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9
+            result += [mtime, Double(info.st_size)]
+        }
+        return result
     }
 }
 
@@ -222,16 +251,28 @@ private final class AntigravitySummaryDB {
     private static func date(_ statement: OpaquePointer?, _ index: Int32) -> Date? {
         let raw = text(statement, index)
         guard !raw.isEmpty, !raw.hasPrefix("0001-01-01") else { return nil }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = iso.date(from: raw) { return date }
-        iso.formatOptions = [.withInternetDateTime]
-        if let date = iso.date(from: raw) { return date }
-        let fallback = DateFormatter()
-        fallback.locale = Locale(identifier: "en_US_POSIX")
-        fallback.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSSZZZZZ"
-        return fallback.date(from: raw)
+        if let date = isoFractional.date(from: raw) { return date }
+        if let date = isoPlain.date(from: raw) { return date }
+        return fallbackFormatter.date(from: raw)
     }
+
+    // Built once: a formatter per row per poll showed up in CPU samples.
+    private static let isoFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    private static let isoPlain: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+    private static let fallbackFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSSZZZZZ"
+        return formatter
+    }()
 
     private static func firstWorkspace(_ raw: String) -> String {
         guard let data = raw.data(using: .utf8),

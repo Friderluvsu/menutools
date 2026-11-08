@@ -85,6 +85,15 @@ Release build, macOS 27.2, arm64.
 - Releasing the panel after close was tried and dropped. The hosting view deallocated, but the footprint did not fall, even after `malloc_zone_pressure_relief`: freed pages stay dirty in the malloc zone, and Swift type metadata and ObjC method caches (about 2 MB) stay for the life of the process. Rebuilding cost 50–80 ms on the next open.
 - A 27 h instance (installed build of `a796370`) measured 64.8 MB footprint, but only 19.9 MB RSS (most of it compressed) and 195 s CPU in total (about 0.2% average). Its heap held 3–4 times more SwiftUI graph objects than a fresh open (for example 2904 against 780 `AnyTrackedValue` dictionaries). The source was not identified: Settings pages, pickers, the shelf panel and the clipboard HUD build view graphs on demand and keep them. Next step: run `leaks <pid>` and `heap <pid>` on a long-running instance before restarting it.
 
+## Open-panel CPU fix (2026-11-05)
+
+Measured with `sample` on a release build while the panel was open.
+- Before: 40–60% CPU. The Sessions summary's neon border used a SwiftUI `repeatForever` rotation (three angular gradients plus a blur). It re-rendered and laid out the whole panel every frame, and kept doing so under stat pages, Sessions and Settings, where the dashboard stays mounted at zero opacity.
+- First fix (30 fps `TimelineView`, paused off the dashboard): 15–25%.
+- Now: about 3%. The border is a Core Animation rotation (`NeonBorderNSView`), so the window server animates it and SwiftUI does no per-frame work. It is removed while the dashboard is hidden (`\.dashboardOnScreen`) and under Reduce Motion.
+- Session polls: `ProcessLookup` remembers the last matching pid, so a repeat check is one syscall instead of a walk over every process. Antigravity and Cursor misses are trusted for 4 s. The Antigravity scan reuses its last read while the database and WAL are unchanged (mtime and size). Cursor does the same, but a reused read expires after 10 s because its windows depend on the clock. Antigravity date formatters are built once.
+- Stat pages: the Top list used `.contentTransition(.numericText())` on ranks and values. SwiftUI rasterises those rolls on the CPU (a blurred offscreen layer plus a colour-space conversion per frame), and the list re-ranks every 2 s. That alone was 25–45% CPU on the CPU page. The rows now update without the roll.
+
 ## Build and verification record
 
 Reported for the fix round (2026-10-09):

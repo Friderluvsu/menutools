@@ -4,20 +4,12 @@ import Foundation
 /// In-process queries on the kernel process table (no `pgrep`/zsh spawn).
 enum ProcessLookup {
     /// Exact process-name match, same semantics as `pgrep -x`.
-    nonisolated static func isRunning(named name: String) -> Bool {
-        let capacity = Int(proc_listallpids(nil, 0))
-        guard capacity > 0 else { return false }
-        var pids = [pid_t](repeating: 0, count: capacity + 16)
-        let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
-        guard count > 0 else { return false }
-
-        var buffer = [CChar](repeating: 0, count: 64)
-        for pid in pids.prefix(count) where pid > 0 {
-            if proc_name(pid, &buffer, UInt32(buffer.count)) > 0, String(cString: buffer) == name {
-                return true
-            }
+    /// `missRetry` > 0 skips the full process walk for that long after a miss (session pollers only).
+    nonisolated static func isRunning(named name: String, missRetry: TimeInterval = 0) -> Bool {
+        cachedMatch("name:" + name, missRetry: missRetry) { pid in
+            var buffer = [CChar](repeating: 0, count: 64)
+            return proc_name(pid, &buffer, UInt32(buffer.count)) > 0 && String(cString: buffer) == name
         }
-        return false
     }
 
     /// Runs a binary directly (no zsh) and returns trimmed stdout+stderr; empty on launch failure.
@@ -62,9 +54,10 @@ enum ProcessLookup {
         pids { isLiveCodex($0) }
     }
 
-    /// Antigravity IDE (Electron) or the `agy` hub.
+    /// Antigravity IDE (Electron) or the `agy` hub. A miss is trusted for 4 s, so the 2 s session
+    /// poll does not walk the whole process table on every tick while Antigravity is closed.
     nonisolated static func isLiveAntigravity() -> Bool {
-        !pids { pid in
+        cachedMatch("antigravity", missRetry: 4) { pid in
             var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
             guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return false }
             let full = String(cString: path)
@@ -75,7 +68,43 @@ enum ProcessLookup {
                 return true
             }
             return URL(fileURLWithPath: full).lastPathComponent.caseInsensitiveCompare("agy") == .orderedSame
-        }.isEmpty
+        }
+    }
+
+    // MARK: - Match cache
+
+    /// Last pid that matched each query. Re-checking that one pid is a single syscall; the full
+    /// walk (one `proc_pidpath` per process, ~800 on a busy Mac) runs only when it stops matching.
+    nonisolated(unsafe) private static var matchedPid: [String: pid_t] = [:]
+    nonisolated(unsafe) private static var missUntil: [String: Date] = [:]
+    nonisolated private static let matchLock = NSLock()
+
+    nonisolated private static func cachedMatch(
+        _ key: String, missRetry: TimeInterval, _ matches: (pid_t) -> Bool
+    ) -> Bool {
+        matchLock.lock()
+        let known = matchedPid[key]
+        let quietUntil = missUntil[key]
+        matchLock.unlock()
+
+        if let known, matches(known) { return true }
+        if known == nil, let quietUntil, quietUntil > Date() { return false }
+
+        let found = firstPid(matching: matches)
+        matchLock.lock()
+        matchedPid[key] = found
+        missUntil[key] = found == nil && missRetry > 0 ? Date().addingTimeInterval(missRetry) : nil
+        matchLock.unlock()
+        return found != nil
+    }
+
+    nonisolated private static func firstPid(matching: (pid_t) -> Bool) -> pid_t? {
+        let capacity = Int(proc_listallpids(nil, 0))
+        guard capacity > 0 else { return nil }
+        var list = [pid_t](repeating: 0, count: capacity + 16)
+        let count = Int(proc_listallpids(&list, Int32(list.count * MemoryLayout<pid_t>.size)))
+        guard count > 0 else { return nil }
+        return list.prefix(count).first { $0 > 0 && matching($0) }
     }
 
     /// Current working directory of a process, or nil if it is gone.

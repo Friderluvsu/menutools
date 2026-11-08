@@ -114,10 +114,18 @@ enum CursorSessionFiles {
 
     /// Top-level chats. `live` is what the card shows. `facts` includes finished headers so a watched run can be seen ending.
     static func scan(now: Date = .now) -> CursorScan {
-        guard ProcessLookup.isRunning(named: "Cursor") else {
+        guard ProcessLookup.isRunning(named: "Cursor", missRetry: 4) else {
             toolBubbleKeys = [:]
             toolBubbleKeysAt = [:]
             return CursorScan(cursorRunning: false, live: [], facts: [], readFailed: false)
+        }
+        // Unchanged database and WAL: reuse the last read. It expires after `reuseLimit` because the
+        // running and waiting windows depend on the clock, not only on the file.
+        let signature = fileSignature()
+        if let lastScan, let signature, lastScan.signature == signature,
+            now.timeIntervalSince(lastScan.at) < reuseLimit
+        {
+            return lastScan.scan
         }
         let db = CursorHeaderDB()
         guard db.open() else {
@@ -150,7 +158,29 @@ enum CursorSessionFiles {
             if lhs.needsInput != rhs.needsInput { return lhs.needsInput }
             return (lhs.startedAt ?? .distantPast) > (rhs.startedAt ?? .distantPast)
         }
-        return CursorScan(cursorRunning: true, live: live, facts: facts, readFailed: false)
+        let result = CursorScan(cursorRunning: true, live: live, facts: facts, readFailed: false)
+        lastScan = signature.map { (signature: $0, at: now, scan: result) }
+        return result
+    }
+
+    private static let reuseLimit: TimeInterval = 10
+    private static var lastScan: (signature: [Double], at: Date, scan: CursorScan)?
+
+    /// Modification time and size of `state.vscdb` and its WAL. nil when the database is missing.
+    private static func fileSignature() -> [Double]? {
+        let path = databaseURL.path
+        var result: [Double] = []
+        for (index, file) in [path, path + "-wal"].enumerated() {
+            var info = stat()
+            guard stat(file, &info) == 0 else {
+                if index == 0 { return nil }
+                result += [0, 0]
+                continue
+            }
+            let mtime = Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9
+            result += [mtime, Double(info.st_size)]
+        }
+        return result
     }
 
     /// `unfinishedRunAt` on the header covers interrupted turns. Clean in-progress turns (e.g. a long

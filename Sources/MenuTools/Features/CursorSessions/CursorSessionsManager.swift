@@ -75,7 +75,7 @@ final class CursorSessionsManager: ObservableObject {
     }
 
     private func reschedule() {
-        let interval = panelOpen || ProcessLookup.isRunning(named: "Cursor") ? Self.fastInterval : Self.idleInterval
+        let interval = panelOpen || ProcessLookup.isRunning(named: "Cursor", missRetry: 4) ? Self.fastInterval : Self.idleInterval
         guard timer == nil || pollInterval != interval else { return }
         pollInterval = interval
         timer?.invalidate()
