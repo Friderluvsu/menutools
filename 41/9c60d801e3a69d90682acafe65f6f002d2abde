@@ -1,0 +1,87 @@
+AGENTS.md
+  s_3cdac31b580767::t_0a3f167d7fcb60 24,27,77,82,185-188,211
+Sources/MenuTools/App/AppDelegate.swift
+  s_e225250414b609::t_22b17eca772e17 558,563-565
+Sources/MenuTools/Features/CursorSessions/CursorSession.swift
+  s_3cdac31b580767::t_2c7b8fb14f23d8 20-21,81-82,243-245,381-384,467-469,497-499
+Sources/MenuTools/Helpers/CarbonHotKeyHelper.swift
+  s_e225250414b609::t_1aa37375f592b4 8-10,12-48,68-69,71
+Sources/MenuTools/Views/Components/AgentSessionRows.swift
+  s_3cdac31b580767::t_691fe50ca75691 171-172,185,201,235,248,269-270,333,340-349,488-500,507-509,522-527,540-549,553-563
+Sources/MenuTools/Views/Components/ClaudeSessionsCard.swift
+  s_3cdac31b580767::t_576e1c091b68ab 33,38-39
+Sources/MenuTools/Views/Components/CodexSessionsCard.swift
+  s_3cdac31b580767::t_da11fdd52dc574 29-30,56-57
+Sources/MenuTools/Views/Components/CursorSessionsCard.swift
+  s_3cdac31b580767::t_ecd54eb776d05b 58-59
+Sources/MenuTools/Views/PopoverContentView.swift
+  s_3cdac31b580767::t_e893898931ec65 1289,1304,1318,1333-1339
+README.md
+  s_3cdac31b580767::t_7bdea31fb281fc 58-59
+Sources/MenuTools/App/PreviewRenderer.swift
+  s_3cdac31b580767::t_ac76e2c31581f1 91-131
+Sources/MenuTools/Features/AgentUsage/ClaudeTranscriptUsage.swift
+  s_3cdac31b580767::t_0b59d5a0e05341 1-246
+Sources/MenuTools/Features/AgentUsage/CodexRolloutUsage.swift
+  s_3cdac31b580767::t_2d61623e09873f 1-121
+Sources/MenuTools/Features/ClaudeSessions/ClaudeSessionsManager.swift
+  s_3cdac31b580767::t_cdbc7b8477d2cf 15-17,47,64,142,151-165
+Sources/MenuTools/Features/Clipboard/ClipboardHUDView.swift
+  s_3cdac31b580767::t_46765f5c43e7e3 4,6,11-12,15,17,19,21-23,25-26,106-243,252
+Sources/MenuTools/Features/Clipboard/ClipboardHUDWindowController.swift
+  s_3cdac31b580767::t_44fbf4decf82f9 2,18,67-69,71-74
+Sources/MenuTools/Features/CodexSessions/CodexSession.swift
+  s_3cdac31b580767::t_6d1843a09f0100 13-14,47-48,61-62,73-74,84,87-92,123-124,135,148,160-161
+Sources/MenuTools/Features/CodexSessions/CodexSessionsManager.swift
+  s_3cdac31b580767::t_b8285150a1fb75 105,111-114,117
+Sources/MenuTools/Views/Components/ClipboardItemRow.swift
+  s_3cdac31b580767::t_e5ce45de5abae8 1,4-5,7-8,15,19-21,24-39,50,56,58,63-74,76-77,79,82-83,85-86,90-112,114-116
+Sources/MenuTools/Views/Tabs/SettingsTabView.swift
+  s_3cdac31b580767::t_135e1a29c76ece 196,584,928-948
+Sources/MenuTools/main.swift
+  s_3cdac31b580767::t_9471a81a2420b9 48-63,88-93
+docs/AGENT_GUIDE.md
+  s_3cdac31b580767::t_3890ab06c8b797 28-29,213-214
+docs/knowledge-base/README.md
+  s_3cdac31b580767::t_0c283dccf5cd2b 12-13
+docs/knowledge-base/claude-sessions.md
+  s_3cdac31b580767::t_60ee8937a92464 31-32
+docs/knowledge-base/codex-sessions.md
+  s_3cdac31b580767::t_afe9e3c9656a53 39
+docs/knowledge-base/cursor-sessions.md
+  s_3cdac31b580767::t_7bd0e9ed4bb596 49
+docs/knowledge-base/performance.md
+  s_3cdac31b580767::t_d43a713ec0271b 21-22
+Sources/MenuTools/Features/AgentUsage/SessionUsage.swift
+  s_3cdac31b580767::t_1293509e605931 1-190
+Sources/MenuTools/Features/Clipboard/ClipboardManager.swift
+  s_3cdac31b580767::t_796fa9df2614a3 2,4,6-10,14-15,20-29,59-69,83-123,133-153,166-168,176-178,183,185-200,215-216,256-257,259-268,270-271,273,277-287,289-291,293-341,343-350,352-360,366-367,369-370,372,374-375,382-383,387-394,400-403,417-546,603-608,613-622,657-681
+docs/knowledge-base/clipboard.md
+  s_3cdac31b580767::t_241a86c1140f63 1-45
+docs/knowledge-base/session-usage.md
+  s_3cdac31b580767::t_f05b2103db2307 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "419c60d801e3a69d90682acafe65f6f002d2abde",
+  "prompts": {},
+  "sessions": {
+    "s_3cdac31b580767": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "415973b5-6336-4010-bf94-df89a288fdb5",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    },
+    "s_e225250414b609": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6987f0b-17cb-4cac-9008-e59383b7f8ee",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    }
+  }
+}
