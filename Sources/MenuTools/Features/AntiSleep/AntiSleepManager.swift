@@ -148,6 +148,22 @@ final class AntiSleepManager: ObservableObject {
             return
         }
         lidError = nil
+        // Closed-lid needs the helper. Without it every restore (battery stop, timer end) would be an
+        // admin prompt shown with the lid closed, nobody to answer it, and sleep left disabled.
+        guard SMCHelperManager.isHelperInstalledSync else {
+            lidWorking = true
+            Task { [weak self] in
+                let installed = await SMCHelperManager.shared.installHelper()
+                guard let self else { return }
+                self.lidWorking = false
+                if installed, SMCHelperManager.isHelperInstalledSync {
+                    self.activateLid()
+                } else {
+                    self.lidError = "Closed-lid needs admin"
+                }
+            }
+            return
+        }
         lidEnd = lidDuration > 0 ? Date().addingTimeInterval(TimeInterval(lidDuration)) : nil
         lidOn = true
         sessionsChanged()
@@ -170,6 +186,8 @@ final class AntiSleepManager: ObservableObject {
     func prepareForTermination() {
         releaseAssertions()
         timer?.cancel()
+        // A `disablesleep 1` spawned just before quit must not land after the restore below.
+        if sleepWorker != nil { Thread.sleep(forTimeInterval: 0.3) }
         if sleepDisabledApplied || sleepWorker != nil {
             SMCHelperManager.restoreSleepSync()
             sleepDisabledApplied = false
@@ -222,7 +240,7 @@ final class AntiSleepManager: ObservableObject {
     /// One worker applies the latest target, so quick on/off toggles never finish out of order.
     private func applySleepDisabled(_ disabled: Bool) {
         sleepDisabledTarget = disabled
-        if !disabled { sleepRestoreFailed = false }
+        if sleepRestoreFailed { sleepRestoreFailed = false }
         guard sleepWorker == nil, sleepDisabledApplied != disabled else { return }
         lidWorking = true
         sleepWorker = Task { [weak self] in

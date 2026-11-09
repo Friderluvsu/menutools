@@ -13,6 +13,7 @@ Focused notes on how MenuTools works, written for maintainers and coding agents.
 | [panel-and-drag.md](panel-and-drag.md) | The panel's interaction state machine: outside press, file drags, spring-loading on the status icon, focus, size. |
 | [shelf.md](shelf.md) | Temporary drop shelf: drag detection, floating panel, drag-out, persistence, card. |
 | [window-controls.md](window-controls.md) | Green maximize and red quit: event tap, Accessibility requirement, fast path, animation design, quit timing. |
+| [mouse.md](mouse.md) | Mouse wheel smooth scroll and modifiers, button actions, pointer speed via HID properties, per-app rules, testing. |
 | [performance.md](performance.md) | Timer and watcher inventory, measurement method, baseline and measurement history, open items. |
 | [system-stats.md](system-stats.md) | Clickable CPU, memory, temperature, network and battery details: what each page shows and where the numbers come from. |
 | [pixel-shimmer.md](pixel-shimmer.md) | SymVibe `.sf-face` city-lights pixel recipe (tried on running rows / Awake, then removed). |

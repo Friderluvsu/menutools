@@ -148,13 +148,17 @@ public final class SMCHelperManager: ObservableObject {
     nonisolated public static func restoreSleepSync() {
         let helperPath = installedHelperPath
         let useHelper = FileManager.default.isExecutableFile(atPath: helperPath)
-        _ = runPmset(setting: "disablesleep", value: "0", useHelper: useHelper)
+        // Never an admin prompt here: it would hang quit and logout (the next launch restores instead).
+        _ = runPmset(setting: "disablesleep", value: "0", useHelper: useHelper, allowPrompt: false)
     }
 
     /// Helper first, then non-interactive sudo, then the admin prompt. Blocks the calling thread.
-    nonisolated private static func runPmset(setting: String, value: String, useHelper: Bool) -> Bool {
+    nonisolated private static func runPmset(
+        setting: String, value: String, useHelper: Bool, allowPrompt: Bool = true
+    ) -> Bool {
         if useHelper, runProcess(installedHelperPath, [setting, value]) { return true }
         if runProcess("/usr/bin/sudo", ["-n", "/usr/bin/pmset", "-a", setting, value]) { return true }
+        guard allowPrompt else { return false }
         let script = "do shell script \"/usr/bin/pmset -a \(setting) \(value)\" with administrator privileges"
         var errorDict: NSDictionary?
         _ = NSAppleScript(source: script)?.executeAndReturnError(&errorDict)

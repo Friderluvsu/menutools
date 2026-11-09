@@ -89,9 +89,12 @@ enum CodexSessionFiles {
     }
 
     static func load() -> [CodexSession] {
+        // Processes first: with no Codex running (the usual case) the thread database is not opened.
+        let pids = ProcessLookup.liveCodexPids()
+        guard !pids.isEmpty else { return [] }
         let threads = CodexThreadDB.threadsByCwd()
         var sessions: [CodexSession] = []
-        for pid in ProcessLookup.liveCodexPids() {
+        for pid in pids {
             let cwd = ProcessLookup.workingDirectory(pid) ?? ""
             let thread = threads[cwd]
             let project = URL(fileURLWithPath: cwd).lastPathComponent

@@ -146,6 +146,11 @@ struct DashboardLayoutCard: View {
                     }
                 }
                 Text("Drag to reorder · eye hides a section")
+                    .onDisappear {
+                        // A drag cut off by the panel closing never gets onEnded.
+                        dragging = nil
+                        dragOffset = 0
+                    }
                     .font(.system(size: 9.5))
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -181,18 +186,20 @@ struct DashboardLayoutCard: View {
                     transaction.disablesAnimations = true
                     withTransaction(transaction) { dragging = section }
                 }
-                // Keep the row within the list.
-                let maxUp = -CGFloat(index) * pitch
-                let maxDown = CGFloat(store.order.count - 1 - index) * pitch
+                // Keep the row within the list (index read now: the order may have changed).
+                let current = store.order.firstIndex(of: section) ?? index
+                let maxUp = -CGFloat(current) * pitch
+                let maxDown = CGFloat(store.order.count - 1 - current) * pitch
                 let clamped = min(max(value.translation.height, maxUp), maxDown)
                 withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.86)) { dragOffset = clamped }
             }
             .onEnded { _ in
                 let target = dropIndex
+                let current = store.order.firstIndex(of: section) ?? index
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
-                    if let target, target != index { store.move(section, by: target - index) }
+                    if let target, target != current { store.move(section, by: target - current) }
                     dragging = nil
                     dragOffset = 0
                 }

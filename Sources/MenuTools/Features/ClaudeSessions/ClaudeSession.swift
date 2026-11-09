@@ -160,49 +160,103 @@ enum ClaudeSessionFiles {
 
     /// Claude's session JSON is the main loop only (`idle` / `busy` / `waiting`).
     /// Subagents live under `projects/<cwd-as-dashes>/<sessionId>/subagents/*.meta.json`.
+    /// A meta without `finished` is only active work if it was not stopped by the user (Esc leaves
+    /// no `finished`) and it or its transcript changed in the last 10 minutes: stale metas from an
+    /// interrupted or resumed session would otherwise keep the session Running forever.
     static func hasUnfinishedSubagent(sessionId: String, cwd: String) -> Bool {
         guard let dir = subagentDirectory(sessionId: sessionId, cwd: cwd),
             let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
         else { return false }
+        let now = Date()
         for name in names where name.hasSuffix(".meta.json") {
             let url = dir.appendingPathComponent(name)
-            guard let data = try? Data(contentsOf: url),
-                let meta = try? JSONDecoder().decode(SubagentMeta.self, from: data)
+            guard let modified = modificationDate(url), let meta = cachedMeta(url, modified: modified),
+                meta.finished != true, meta.stoppedByUser != true
             else { continue }
-            if meta.finished != true { return true }
+            let transcript = dir.appendingPathComponent(String(name.dropLast(".meta.json".count)) + ".jsonl")
+            let lastActivity = max(modified, modificationDate(transcript) ?? .distantPast)
+            if now.timeIntervalSince(lastActivity) < 600 { return true }
         }
         return false
     }
 
+    private static func modificationDate(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    /// Decoded metas by path, reused while the file's modification date is unchanged (polled every 2 s).
+    private static let metaLock = NSLock()
+    nonisolated(unsafe) private static var metaCache: [String: (modified: Date, meta: SubagentMeta)] = [:]
+    nonisolated(unsafe) private static var directoryCache: [String: URL] = [:]
+    nonisolated(unsafe) private static var missedAt: [String: Date] = [:]
+
+    private static func cachedMeta(_ url: URL, modified: Date) -> SubagentMeta? {
+        metaLock.lock()
+        let cached = metaCache[url.path]
+        metaLock.unlock()
+        if let cached, cached.modified == modified { return cached.meta }
+        guard let data = try? Data(contentsOf: url), let meta = try? JSONDecoder().decode(SubagentMeta.self, from: data)
+        else { return nil }
+        metaLock.lock()
+        if metaCache.count > 400 { metaCache.removeAll() }
+        metaCache[url.path] = (modified, meta)
+        metaLock.unlock()
+        return meta
+    }
+
     private static func subagentDirectory(sessionId: String, cwd: String) -> URL? {
+        metaLock.lock()
+        let known = directoryCache[sessionId]
+        let missed = missedAt[sessionId]
+        metaLock.unlock()
+        if let known { return known }
+        // No subagent folder yet: look again at most every 10 s (the scan below lists all projects).
+        if let missed, Date().timeIntervalSince(missed) < 10 { return nil }
         let projects = directory.deletingLastPathComponent().appendingPathComponent("projects", isDirectory: true)
-        let encoded = cwd.replacingOccurrences(of: "/", with: "-")
-        let primary =
-            projects
-            .appendingPathComponent(encoded, isDirectory: true)
-            .appendingPathComponent(sessionId, isDirectory: true)
-            .appendingPathComponent("subagents", isDirectory: true)
+        // Claude Code turns every character other than a letter or digit into "-".
+        let encoded = String(cwd.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        var candidates = [encoded, cwd.replacingOccurrences(of: "/", with: "-")]
+        var found: URL?
         var isDir: ObjCBool = false
-        if FileManager.default.fileExists(atPath: primary.path, isDirectory: &isDir), isDir.boolValue {
-            return primary
-        }
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: projects.path) else { return nil }
-        for name in names {
-            let candidate =
-                projects
-                .appendingPathComponent(name, isDirectory: true)
+        for name in candidates {
+            let url = projects.appendingPathComponent(name, isDirectory: true)
                 .appendingPathComponent(sessionId, isDirectory: true)
                 .appendingPathComponent("subagents", isDirectory: true)
-            if FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir), isDir.boolValue {
-                return candidate
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                found = url
+                break
             }
         }
-        return nil
+        if found == nil {
+            candidates = (try? FileManager.default.contentsOfDirectory(atPath: projects.path)) ?? []
+            for name in candidates {
+                let url = projects.appendingPathComponent(name, isDirectory: true)
+                    .appendingPathComponent(sessionId, isDirectory: true)
+                    .appendingPathComponent("subagents", isDirectory: true)
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                    found = url
+                    break
+                }
+            }
+        }
+        // Hits are kept; misses are retried after 10 s (the folder appears with the first subagent).
+        metaLock.lock()
+        if directoryCache.count > 200 { directoryCache.removeAll() }
+        if missedAt.count > 200 { missedAt.removeAll() }
+        if let found {
+            directoryCache[sessionId] = found
+            missedAt[sessionId] = nil
+        } else {
+            missedAt[sessionId] = Date()
+        }
+        metaLock.unlock()
+        return found
     }
 }
 
 private struct SubagentMeta: Decodable {
     let finished: Bool?
+    let stoppedByUser: Bool?
 }
 
 private struct RawSession: Decodable {

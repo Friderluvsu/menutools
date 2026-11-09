@@ -70,7 +70,8 @@ final class CodexSessionsManager: ObservableObject {
     }
 
     private func reschedule() {
-        let busy = panelOpen || !ProcessLookup.liveCodexPids().isEmpty || !tracking.isEmpty
+        // `sessions` was just loaded from the live pids; no second walk of the process table.
+        let busy = panelOpen || !sessions.isEmpty || !tracking.isEmpty
         let interval = busy ? Self.fastInterval : Self.idleInterval
         guard timer == nil || pollInterval != interval else { return }
         pollInterval = interval
@@ -125,7 +126,8 @@ final class CodexSessionsManager: ObservableObject {
 
     /// Remember which ended rows are new. They stay blue, and the menu bar stays blue, until the row is on screen.
     private func noteFreshEnded() {
-        freshEnded = Set(ended.filter { !$0.seen }.map(\.id))
+        let fresh = Set(ended.filter { !$0.seen }.map(\.id))
+        if fresh != freshEnded { freshEnded = fresh }
     }
 
     /// The ended rows are visible. Clear the menu-bar blue and keep the blue row until the panel closes.

@@ -39,6 +39,28 @@ private final class ZeroBlinkStatusBarButton: NSStatusBarButton {
         AppDelegate.sharedInstance?.statusButtonMouseUp()
     }
 
+    // Hover peek: enter / exit only, no mouse-moved events. No stored property here: the system
+    // button is re-classed with object_setClass, so a subclass ivar would have no storage. The area
+    // is found again by its userInfo tag.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas where area.userInfo?["menutools.hover"] != nil {
+            removeTrackingArea(area)
+        }
+        addTrackingArea(
+            NSTrackingArea(
+                rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self,
+                userInfo: ["menutools.hover": true]))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        AppDelegate.sharedInstance?.statusButtonHover(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        AppDelegate.sharedInstance?.statusButtonHover(false)
+    }
+
     /// Keeps the live status lights over the image slot (left of any title).
     override func layout() {
         super.layout()
@@ -121,6 +143,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sessionRingEnabled: Bool { StatusLightSettings.shared.enabled }
     /// Draws and animates the three session lights (style picked in Settings → General).
     private var statusLights: StatusLightsAnimator?
+    private let sessionPeek = SessionPeekController()
+    private var lastTitleSegments: [MenuBarSegment]?
+    private var lastMarkCounts: [Int]?
+    private var bypassPoll: Timer?
     private var isMouseDownOnButton: Bool = false
     // Outside-press state machine: a press outside the panel only closes it on mouse up, and only if it was not a drag.
     private let dragPasteboard = NSPasteboard(name: .drag)
@@ -210,6 +236,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.statusLights?.refresh()
+                    // Symbols are drawn for one appearance; rebuild the title for the new one.
+                    self?.lastTitleSegments = nil
+                    self?.updateStatusItemTitle()
                     self?.updateStatusItemIcon()
                 }
             }
@@ -222,9 +251,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updateStatusItemIcon()
             }
             .store(in: &cancellables)
+        // Awake / Closed-lid symbols and countdowns in the menu bar title.
+        appState.antiSleep.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateStatusItemTitle() }
+            .store(in: &cancellables)
 
         // Session refreshes post this after the new rows are stored. objectWillChange fires in willSet,
         // which can paint the previous marks and then skip the real change until the panel opens.
+        MenuBarItemsStore.shared.$items
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.syncMenuBarItemSources() }
+            .store(in: &cancellables)
+
         StatusLightSettings.shared.$enabled
             .dropFirst()
             .removeDuplicates()
@@ -235,7 +275,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionMarksObserver = NotificationCenter.default.addObserver(
             forName: .sessionMenuMarksChanged, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateStatusItemIcon() }
+            MainActor.assumeIsolated {
+                self?.updateStatusItemIcon()
+                if let self { self.sessionPeek.refresh(self.appState?.sessionPeek ?? []) }
+            }
         }
     }
 
@@ -338,7 +381,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updatePanelPosition()
     }
 
+    /// Hover peek: a session card under the icon while the pointer rests on it (lights on, panel closed).
+    func statusButtonHover(_ inside: Bool) {
+        guard let button = statusItem.button else { return }
+        let wanted =
+            inside && !isPanelOpen && StatusLightSettings.shared.enabled && StatusLightSettings.shared.hoverPeek
+        sessionPeek.hover(wanted, button: button) { [weak self] in self?.appState?.sessionPeek ?? [] }
+    }
+
     func statusButtonMouseDown() {
+        sessionPeek.hide()
         isMouseDownOnButton = true
         togglePanel(nil)
     }
@@ -360,6 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// `activate: false` shows the panel without taking focus, so an in-flight drag session is not disturbed.
     func showPanel(activate: Bool = true) {
+        sessionPeek.hide()
         // Scan before the first layout so a live session is in the tree when the height is measured.
         appState?.onPopoverWillShow()
         if panel == nil {
@@ -522,6 +575,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// so the caches are cleared to force a repaint.
     private func statusLightsToggled(_ enabled: Bool) {
         currentIconStyle = nil
+        lastMarkCounts = nil
         lastSessionAlert = false
         lastDarkMode = nil
         lastBatteryPercentage = -1
@@ -535,8 +589,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateSessionRingIcon(button: NSStatusBarButton, state: AppState) {
         let marks = state.sessionMarks
         let tip = marks.tooltip.isEmpty ? nil : marks.tooltip
-        if button.toolTip != tip { button.toolTip = tip }
-        statusLights?.update(input: marks.needsInput, running: marks.running, ended: marks.endedUnseen)
+        // The hover peek replaces the plain tooltip.
+        let shownTip = StatusLightSettings.shared.hoverPeek ? nil : tip
+        if button.toolTip != shownTip { button.toolTip = shownTip }
+        // Every manager posts on every refresh; most of those carry the same counts.
+        let counts = [marks.inputCount, marks.runningCount, marks.endedCount]
+        guard counts != lastMarkCounts else { return }
+        lastMarkCounts = counts
+        statusLights?.update(counts: counts)
     }
 
     /// Battery bars and symbol styles. Used while `sessionRingEnabled` is false.
@@ -694,12 +754,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return canvas
     }
 
+    /// Menu bar items beside the icon (Settings → General → Menu bar). Rebuilt only when the pieces change.
     private func updateStatusItemTitle() {
         guard let button = statusItem.button, let state = appState else { return }
-        let title = state.menuBarTitle
-        if button.title != title {
-            button.title = title
+        let segments = state.menuBarSegments(MenuBarItemsStore.shared.ordered)
+        guard segments != lastTitleSegments else { return }
+        lastTitleSegments = segments
+        if segments.isEmpty {
+            button.title = ""
+        } else {
+            button.attributedTitle = MenuBarTitleRenderer.title(
+                segments, font: button.font ?? NSFont.menuBarFont(ofSize: 0))
         }
+    }
+
+    /// Stat items follow the 2 s sampler; VPN / SpoofDPI items poll their status every 15 s while the
+    /// panel is closed (the panel polls every 5 s itself).
+    private func syncMenuBarItemSources() {
+        let store = MenuBarItemsStore.shared
+        appState?.systemMonitor.onSample =
+            store.needsStats
+            ? { [weak self] in MainActor.assumeIsolated { self?.updateStatusItemTitle() } } : nil
+        bypassPoll?.invalidate()
+        bypassPoll = nil
+        if store.needsNetworkBypass {
+            appState?.network.refreshStatus()
+            let timer = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, !self.isPanelOpen else { return }
+                    self.appState?.network.refreshStatus()
+                }
+            }
+            timer.tolerance = 3
+            RunLoop.main.add(timer, forMode: .common)
+            bypassPoll = timer
+        }
+        updateStatusItemTitle()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -709,5 +799,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Synchronous: the process exits right after this returns, so no Task would ever run.
         appState?.antiSleep.prepareForTermination()
+        appState?.mouse.prepareForTermination()
     }
 }

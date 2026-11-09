@@ -305,6 +305,12 @@ struct PopoverContentView: View {
                 settingsOpacity = show ? 1 : 0
             }
         }
+        // Closed Settings is dropped after the fade; its measured height stays in `settingsHeight`.
+        guard !show else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard token == settingsFadeToken, !showSettings else { return }
+            settingsMounted = false
+        }
     }
 
     /// The Sessions page is showing, so its ended rows count as seen. The dashboard summary does not.
@@ -338,6 +344,10 @@ struct PopoverContentView: View {
         noteSessionsPageVisible()
         DispatchQueue.main.async {
             withAnimation(SessionDashboardLayout.pageAnimation) { sessionsOpacity = 0 }
+        }
+        // Drop the page after the fade, like the stat page, so it stops rebuilding on session ticks.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            if !showSessions { sessionsMounted = false }
         }
     }
 
@@ -390,10 +400,12 @@ struct PopoverContentView: View {
 
 // MARK: - Header
 
-/// Title + system actions as icon buttons. Observes AppState only for the icon style.
+/// Title + system actions as icon buttons. Follows only the icon style (not all of AppState, which
+/// republishes on every session and battery tick).
 private struct PanelHeader: View {
     @Environment(\.appTheme) private var theme
-    @ObservedObject var appState: AppState
+    let appState: AppState
+    @State private var iconSymbol: String?
     @ObservedObject var systemUtils: SystemUtilsManager
     let isSettings: Bool
     let isSessions: Bool
@@ -405,7 +417,7 @@ private struct PanelHeader: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: appState.menuBarIconStyle.symbolName)
+            Image(systemName: iconSymbol ?? appState.menuBarIconStyle.symbolName)
                 .font(.system(size: 11, weight: .regular))
                 .foregroundStyle(theme.isFeatured ? AnyShapeStyle(.secondary) : AnyShapeStyle(theme.accent))
                 .frame(width: 22, height: 22)
@@ -440,6 +452,9 @@ private struct PanelHeader: View {
         }
         .padding(.horizontal, MacToolsTheme.outerPadding + 2)
         .frame(height: 34)
+        .onReceive(appState.$menuBarIconStyle.removeDuplicates()) { style in
+            if iconSymbol != style.symbolName { iconSymbol = style.symbolName }
+        }
     }
 
     private var title: String {

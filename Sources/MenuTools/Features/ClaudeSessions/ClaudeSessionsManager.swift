@@ -33,6 +33,14 @@ final class ClaudeSessionsManager: ObservableObject {
     private var runningSince: [String: Date] = [:]
     /// First read that saw the session idle after a run. A finish needs the idle to hold.
     private var idleSince: [String: Date] = [:]
+    /// Runs in which the main loop or a subagent actually worked. A permission prompt that is
+    /// rejected (waiting, then idle) is not a finished run.
+    private var workedRuns: Set<String> = []
+    /// Runs restored from disk at launch: MenuTools was not running for part of them, so their
+    /// length is unknown.
+    private var restoredRuns: Set<String> = []
+    private var loading = false
+    private var refreshAgain = false
 
     /// A run shorter than this finishing is not announced (quick replies).
     private static let minimumRun: TimeInterval = 10
@@ -59,7 +67,8 @@ final class ClaudeSessionsManager: ObservableObject {
     func startMonitoring() {
         guard !previewMode else { return }
         panelOpen = true
-        freshFinished = Set(finished.filter { !$0.value.seen }.map(\.key))
+        let fresh = Set(finished.filter { !$0.value.seen }.map(\.key))
+        if fresh != freshFinished { freshFinished = fresh }
         refresh()
     }
 
@@ -77,6 +86,7 @@ final class ClaudeSessionsManager: ObservableObject {
         freshFinished.formUnion(finished.filter { !$0.value.seen }.map(\.key))
         for key in finished.keys { finished[key]?.seen = true }
         saveInputWatch()
+        NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
     }
 
     /// Brings forward the terminal (or other app) that owns this Claude process.
@@ -98,7 +108,7 @@ final class ClaudeSessionsManager: ObservableObject {
         pollInterval = interval
         timer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in self?.refresh(inBackground: true) }
         }
         timer.tolerance = interval == Self.fastInterval ? 0.5 : interval * 0.3
         // `.common` still fires while another app is tracking the mouse. `.default` does not.
@@ -106,9 +116,34 @@ final class ClaudeSessionsManager: ObservableObject {
         self.timer = timer
     }
 
-    private func refresh() {
+    /// Timer and watcher ticks read the session files off the main thread (process checks, subagent
+    /// metas). Launch and panel open read synchronously, so the first layout already has the rows.
+    private func refresh(inBackground: Bool = false) {
+        guard inBackground else {
+            apply(ClaudeSessionFiles.load())
+            return
+        }
+        guard !loading else {
+            refreshAgain = true
+            return
+        }
+        loading = true
+        Task.detached(priority: .utility) { [weak self] in
+            let loaded = ClaudeSessionFiles.load()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.loading = false
+                self.apply(loaded)
+                if self.refreshAgain {
+                    self.refreshAgain = false
+                    self.refresh(inBackground: true)
+                }
+            }
+        }
+    }
+
+    private func apply(_ loaded: [ClaudeSession]) {
         defer { NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil) }
-        let loaded = ClaudeSessionFiles.load()
         if loaded != sessions { sessions = loaded }
         let inputChanged = absorbInput(loaded)
         if absorbRuns(loaded) || inputChanged { saveInputWatch() }
@@ -137,18 +172,30 @@ final class ClaudeSessionsManager: ObservableObject {
         var nextFinished = finished.filter { liveIDs.contains($0.key) }
         if nextFinished.count != finished.count { changed = true }
         runningSince = runningSince.filter { liveIDs.contains($0.key) }
+        workedRuns.formIntersection(liveIDs)
+        restoredRuns.formIntersection(liveIDs)
         idleSince = idleSince.filter { liveIDs.contains($0.key) }
         var fresh: [(ClaudeSession, ClaudeFinish)] = []
         for session in live {
             let id = session.id
+            // A saved start from before this process started belongs to an earlier process with the
+            // same pid; it would report a run of hours.
+            if let start = runningSince[id], let started = session.startedAt, start < started {
+                runningSince[id] = nil
+                restoredRuns.remove(id)
+                workedRuns.remove(id)
+                changed = true
+            }
             if session.isWorking || session.needsInput {
                 // Still inside a run (a permission prompt is part of it). A new run clears Done.
                 if runningSince[id] == nil {
                     runningSince[id] = now
+                    restoredRuns.remove(id)
                     changed = true
                 }
+                if session.isWorking { workedRuns.insert(id) }
                 idleSince[id] = nil
-                if session.isWorking, nextFinished.removeValue(forKey: id) != nil {
+                if nextFinished.removeValue(forKey: id) != nil {
                     changed = true
                     freshFinished.remove(id)
                 }
@@ -161,9 +208,12 @@ final class ClaudeSessionsManager: ObservableObject {
             runningSince[id] = nil
             idleSince[id] = nil
             changed = true
+            let restored = restoredRuns.remove(id) != nil
+            // A restored run may have worked before the relaunch; otherwise only real work counts.
+            guard workedRuns.remove(id) != nil || restored else { continue }
             let ranFor = idleStart.timeIntervalSince(start)
-            guard ranFor >= Self.minimumRun else { continue }
-            let finish = ClaudeFinish(finishedAt: idleStart, ranFor: ranFor, seen: false)
+            guard restored || ranFor >= Self.minimumRun else { continue }
+            let finish = ClaudeFinish(finishedAt: idleStart, ranFor: restored ? -1 : ranFor, seen: false)
             nextFinished[id] = finish
             fresh.append((session, finish))
         }
@@ -180,7 +230,7 @@ final class ClaudeSessionsManager: ObservableObject {
         content.title = "Claude finished"
         let project = item.project
         let place = project.isEmpty || project == "—" ? item.name : "\(item.name) · \(project)"
-        content.body = "\(place) · ran \(ClaudeFinish.duration(finish.ranFor))"
+        content.body = finish.ranFor < 0 ? place : "\(place) · ran \(ClaudeFinish.duration(finish.ranFor))"
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "claude-finished-\(item.id)-\(Int(finish.finishedAt.timeIntervalSince1970))",
@@ -215,7 +265,9 @@ final class ClaudeSessionsManager: ObservableObject {
             let file = try? JSONDecoder().decode(InputWatch.self, from: data)
         else { return }
         awaitingInput = Set(file.awaitingInput)
-        runningSince = file.runningSince ?? [:]
+        // Runs saved more than 12 h ago are not resumed: MenuTools was likely closed through the end.
+        runningSince = (file.runningSince ?? [:]).filter { Date().timeIntervalSince($0.value) < 12 * 3600 }
+        restoredRuns = Set(runningSince.keys)
         finished = file.finished ?? [:]
     }
 
@@ -244,7 +296,7 @@ final class ClaudeSessionsManager: ObservableObject {
                     self.watchSource?.cancel()
                     self.watchSource = nil
                 }
-                self.refresh()
+                self.refresh(inBackground: true)
             }
         }
         source.setCancelHandler { close(fd) }

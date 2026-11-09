@@ -6,10 +6,97 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case general = "General"
     case look = "Look"
     case windows = "Windows"
+    case mouse = "Mouse"
     case messages = "Messages"
     case network = "Network"
 
     var id: String { rawValue }
+
+    /// SF Symbol for the tab (filled when selected). Mouse is drawn by `MouseGlyph`.
+    func symbol(selected: Bool) -> String? {
+        switch self {
+        case .general: return selected ? "gearshape.fill" : "gearshape"
+        case .look: return selected ? "paintpalette.fill" : "paintpalette"
+        case .windows: return "macwindow.on.rectangle"
+        case .mouse: return nil
+        case .messages: return selected ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right"
+        case .network: return "globe"
+        }
+    }
+}
+
+/// Icon tabs with a small label, equal widths. A text segmented control with six pages is wider
+/// than the panel and pushes every page out to the edges.
+private struct SettingsTabBar: View {
+    @Binding var selection: SettingsSection
+    @Environment(\.appTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(SettingsSection.allCases) { section in
+                let isSelected = section == selection
+                Button {
+                    selection = section
+                } label: {
+                    VStack(spacing: 2) {
+                        Group {
+                            if let symbol = section.symbol(selected: isSelected) {
+                                Image(systemName: symbol)
+                                    .font(.system(size: 13, weight: .medium))
+                            } else {
+                                MouseGlyph(filled: isSelected)
+                                    .frame(width: 10.5, height: 15)
+                            }
+                        }
+                        .frame(height: 16)
+                        Text(section.rawValue)
+                            .font(.system(size: 9.5, weight: isSelected ? .semibold : .medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .foregroundStyle(isSelected ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.secondary))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(
+                        isSelected ? theme.accent.opacity(0.14) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: theme.radius(7), style: .continuous)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .suppressesFocusRing()
+                .help(section.rawValue)
+            }
+        }
+        .padding(2)
+        .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(9), style: .continuous))
+    }
+}
+
+/// A mouse with a small wheel pill and no button split line. Filled: solid body, wheel cut out.
+struct MouseGlyph: View {
+    var filled = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let body = RoundedRectangle(cornerRadius: size.width * 0.5, style: .continuous)
+            let wheel = Capsule()
+                .frame(width: max(1.6, size.width * 0.16), height: size.height * 0.24)
+                .offset(y: -size.height * 0.2)
+            if filled {
+                body
+                    .fill(.foreground)
+                    .overlay(wheel.blendMode(.destinationOut))
+                    .compositingGroup()
+            } else {
+                ZStack {
+                    body.strokeBorder(.foreground, lineWidth: max(1.2, size.width * 0.13))
+                    wheel
+                }
+            }
+        }
+    }
 }
 
 private struct SettingsSectionHeightKey: PreferenceKey {
@@ -29,17 +116,10 @@ struct SettingsTabView: View {
 
     var body: some View {
         VStack(spacing: MacToolsTheme.sectionSpacing) {
-            Picker("", selection: $section) {
-                ForEach(SettingsSection.allCases) { section in
-                    Text(section.rawValue).tag(section)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(.small)
-            .padding(.bottom, 2)
+            SettingsTabBar(selection: $section)
+                .padding(.bottom, 2)
 
-            // All four pages are built with Settings. A tab click only changes which
+            // All pages are built with Settings. A tab click only changes which
             // one is visible, and the well stays at the tallest page so the panel
             // window is not resized.
             ZStack(alignment: .top) {
@@ -74,6 +154,7 @@ struct SettingsTabView: View {
         .onAppear {
             appState.iMessage.refreshPermissions()
             appState.windowManager.refreshPermissions()
+            appState.mouse.refreshPermissions()
         }
     }
 
@@ -120,6 +201,8 @@ private struct SettingsSectionPage: View {
             case .windows:
                 permissionsCard
                 windowControlsCard
+            case .mouse:
+                MouseSettingsPage(mouse: appState.mouse)
             case .messages:
                 messagesCard
                 shortcutsCard
@@ -257,28 +340,12 @@ private struct SettingsSectionPage: View {
                 Text("Excluded apps")
                     .font(.system(size: 11, weight: .medium))
                 Spacer()
-                Menu {
-                    let runningApps = appState.windowManager.getRunningGUIApps()
-                    if runningApps.isEmpty {
-                        Text("No other running apps")
-                    } else {
-                        ForEach(runningApps, id: \.bundleId) { app in
-                            Button(app.name) {
-                                appState.windowManager.addException(bundleId: app.bundleId, name: app.name)
-                            }
-                        }
-                    }
-                    Divider()
-                    Button("Custom identifier…") {
-                        isAddingCustomException.toggle()
-                    }
-                } label: {
-                    Label("Add", systemImage: "plus")
+                RunningAppsMenu(
+                    title: "Add", taken: Set(appState.windowManager.exceptions.map(\.id)),
+                    custom: { isAddingCustomException.toggle() }
+                ) { id, name in
+                    appState.windowManager.addException(bundleId: id, name: name)
                 }
-                .menuStyle(.button)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .fixedSize()
             }
 
             if isAddingCustomException {
@@ -471,21 +538,7 @@ private struct SettingsSectionPage: View {
 
             Divider().opacity(0.35)
 
-            SettingsRow(title: "Menu bar label") {
-                Picker(
-                    "",
-                    selection: Binding(
-                        get: { appState.statusDisplayMode },
-                        set: { appState.setStatusDisplayMode($0) })
-                ) {
-                    ForEach(StatusItemDisplayMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(width: 190)
-            }
+            MenuBarItemsRow()
 
             Divider().opacity(0.35)
 
@@ -612,13 +665,17 @@ private struct StatusLightsRows: View {
         if settings.enabled {
             SettingsRow(title: "Style", isSecondary: true) {
                 Picker("", selection: $settings.style) {
-                    ForEach(StatusLightStyle.allCases) { style in
-                        Label {
-                            Text(style.rawValue)
-                        } icon: {
-                            Image(nsImage: preview(style))
+                    ForEach(StatusLightStyle.Group.allCases, id: \.self) { group in
+                        Section(group.rawValue) {
+                            ForEach(StatusLightStyle.allCases.filter { $0.group == group }) { style in
+                                Label {
+                                    Text(style.rawValue)
+                                } icon: {
+                                    Image(nsImage: preview(style))
+                                }
+                                .tag(style)
+                            }
                         }
-                        .tag(style)
                     }
                 }
                 .labelsHidden()
@@ -633,6 +690,27 @@ private struct StatusLightsRows: View {
                     .controlSize(.small)
             }
             .padding(.leading, 12)
+            SettingsRow(title: "Extras", isSecondary: true) {
+                HStack(spacing: 4) {
+                    ExtraToggle(symbol: "timer", help: Self.busyHelp, isOn: $settings.busyTimer)
+                    ExtraToggle(symbol: "speaker.wave.2", help: Self.soundsHelp, isOn: $settings.sounds)
+                    ExtraToggle(
+                        symbol: "eye", help: "Hover peek: hover the icon to see sessions", isOn: $settings.hoverPeek)
+                    ExtraToggle(
+                        symbol: "sparkles", help: "Celebrate when the last run finishes", isOn: $settings.celebrate)
+                }
+            }
+            .padding(.leading, 12)
+            if settings.animations {
+                SettingsRow(title: "Idle life", isSecondary: true) {
+                    Toggle("", isOn: $settings.idleLife)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .help("A small gesture now and then; a reminder pop when input waits over 2 min")
+                }
+                .padding(.leading, 12)
+            }
         }
         Divider().opacity(0.35)
         SettingsRow(title: settings.enabled ? "Panel icon" : "Menu bar icon") {
@@ -652,12 +730,58 @@ private struct StatusLightsRows: View {
         }
     }
 
-    /// Two lights on, so the menu shows how each style reads.
+    private static let busyHelp = "Busy timer: a line under the icon fills over an hour of work"
+    private static let soundsHelp = "Sounds: a chime for input, a tick when a run is done"
+
+    /// Two lights on, so the menu shows how each style reads (count styles: 1 input, 2 running).
     private func preview(_ style: StatusLightStyle) -> NSImage {
         StatusLightsRenderer.image(
             style: style,
             lights: [StatusLightFrame(level: 1), StatusLightFrame(level: 1), StatusLightFrame(level: 0)],
-            isDark: scheme == .dark)
+            isDark: scheme == .dark, counts: [1, 2, 0])
+    }
+}
+
+/// Items shown beside the menu bar icon: one switch per item, lit when shown.
+private struct MenuBarItemsRow: View {
+    @ObservedObject private var store = MenuBarItemsStore.shared
+
+    var body: some View {
+        SettingsRow(title: "Menu bar") {
+            HStack(spacing: 3) {
+                ForEach(MenuBarItem.allCases) { item in
+                    ExtraToggle(
+                        symbol: item.symbol, help: item.title,
+                        isOn: Binding(get: { store.items.contains(item) }, set: { _ in store.toggle(item) }))
+                }
+            }
+        }
+    }
+}
+
+/// Small icon switch: lit when on.
+private struct ExtraToggle: View {
+    let symbol: String
+    let help: String
+    @Binding var isOn: Bool
+    @Environment(\.appTheme) private var theme
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isOn ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.tertiary))
+                .frame(width: 24, height: 20)
+                .background(
+                    isOn ? theme.accent.opacity(0.15) : Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(help) (\(isOn ? "on" : "off"))")
     }
 }
 
@@ -689,7 +813,7 @@ private struct AILimitsSettingsCard: View {
 // MARK: - Building blocks
 
 /// Card with a readable header; every settings section uses this so spacing and type stay consistent.
-private struct SettingsCard<Content: View>: View {
+struct SettingsCard<Content: View>: View {
     let title: String
     let icon: String
     let color: Color
@@ -708,7 +832,7 @@ private struct SettingsCard<Content: View>: View {
 }
 
 /// Single row: title on the left, control on the right.
-private struct SettingsRow<Trailing: View>: View {
+struct SettingsRow<Trailing: View>: View {
     let title: String
     var isSecondary = false
     @ViewBuilder let trailing: Trailing
@@ -753,7 +877,7 @@ private struct PermissionRow: View {
     }
 }
 
-private struct DiagnosticRow: View {
+struct DiagnosticRow: View {
     let label: String
     let value: String
     let isHealthy: Bool

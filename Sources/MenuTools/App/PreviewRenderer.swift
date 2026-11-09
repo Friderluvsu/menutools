@@ -90,6 +90,7 @@ enum PreviewRenderer {
 
     /// `--render-status-lights <png>`: one row per style. Columns: quiet, mixed, all on, a light
     /// popping on (with halo), a light turning off, open spin / wave, then all on over a light menu bar.
+    /// Count styles show counts instead (see `countColumns`).
     static func renderStatusLights(to outputURL: URL) -> Bool {
         let scale: CGFloat = 6
         let cell = NSSize(width: 30 * scale, height: 24 * scale)
@@ -125,8 +126,11 @@ enum PreviewRenderer {
                     width: cell.width, height: cell.height)
                 (frame.3 ? NSColor(white: 0.93, alpha: 1) : NSColor(white: 0.13, alpha: 1)).setFill()
                 rect.fill()
+                // Count styles: quiet, 1 / 2 / 3 running, one of each, 2-3-1, then 3-3-3 on a light bar.
+                let countColumns = [[0, 0, 0], [0, 1, 0], [0, 2, 0], [0, 3, 0], [1, 1, 1], [2, 3, 1], [3, 3, 3]]
                 let image = StatusLightsRenderer.image(
-                    style: style, lights: frame.0, rotation: frame.1, isDark: frame.2, scale: scale)
+                    style: style, lights: frame.0, rotation: frame.1, isDark: frame.2, scale: scale,
+                    counts: style.isCounting ? countColumns[column] : nil)
                 let origin = NSPoint(x: rect.midX - image.size.width / 2, y: rect.midY - image.size.height / 2)
                 image.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
             }

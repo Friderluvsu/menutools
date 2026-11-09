@@ -13,6 +13,18 @@ final class SystemMonitorManager: ObservableObject {
     @Published var uploadSpeedKBps: Double = 0.0
     /// Nil until the accelerator has reported a utilization.
     @Published var gpuUsage: Double?
+
+    /// Latest sample for the menu bar items, updated every tick even while the panel is closed.
+    /// Not published: the dashboard must not re-render on these ticks.
+    struct MenuBarStats: Equatable {
+        var cpu: Double = 0
+        var temperature: Double?
+        var memory: Double = 0
+        var downKBps: Double = 0
+    }
+    private(set) var menuBarStats = MenuBarStats()
+    /// Called after each sample (AppDelegate refreshes the title when a stat item is shown).
+    var onSample: (() -> Void)?
     /// Nil until the startup volume has been read. Free and total stay 0 until then.
     @Published var diskUsedPercent: Double?
     @Published var diskFreeBytes: UInt64 = 0
@@ -328,6 +340,11 @@ final class SystemMonitorManager: ObservableObject {
                     totalBytesIn, totalBytesOut, appGB, wiredGB, compressedGB, cachedGB,
                 ] in
                 guard let self = self else { return }
+                if let newCPU { self.menuBarStats.cpu = newCPU }
+                if let realTemp { self.menuBarStats.temperature = realTemp }
+                self.menuBarStats.memory = newMemPercent
+                if let downSpeed { self.menuBarStats.downKBps = downSpeed }
+                self.onSample?()
                 if self.panelOpen {
                     if let newCPU { self.setIfChanged(\.cpuUsage, newCPU, epsilon: 0.1) }
                     if let realTemp { self.setIfChanged(\.cpuTemperature, realTemp, epsilon: 0.5) }

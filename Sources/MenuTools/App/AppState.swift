@@ -98,14 +98,6 @@ enum MenuBarIconStyle: String, CaseIterable, Identifiable {
     }
 }
 
-enum StatusItemDisplayMode: String, CaseIterable, Identifiable {
-    case iconOnly = "Icon Only"
-    case iconAndAntiSleep = "Icon + Anti-Sleep Timer"
-    case iconAndNetworkStatus = "Icon + VPN / Spoof Status"
-
-    var id: String { rawValue }
-}
-
 /// Counts behind the menu bar ring. Idle sessions are left out.
 struct SessionMenuMarks: Equatable {
     var inputCount = 0
@@ -134,7 +126,6 @@ extension Notification.Name {
 @MainActor
 final class AppState: ObservableObject {
     @Published var selectedTab: UnifiedTab = .components
-    @Published var statusDisplayMode: StatusItemDisplayMode = .iconOnly
     @Published var menuBarIconStyle: MenuBarIconStyle = .iceCube {
         didSet {
             UserDefaults.standard.set(menuBarIconStyle.rawValue, forKey: "MenuBarIconStyle")
@@ -156,6 +147,7 @@ final class AppState: ObservableObject {
     let fanControl = FanControlManager()
     let battery = BatteryManager()
     let windowManager = WindowManager()
+    let mouse: MouseManager
     let universalControl = UniversalControlManager()
     let aiLimits: AILimitsManager
     let claudeSessions: ClaudeSessionsManager
@@ -168,18 +160,13 @@ final class AppState: ObservableObject {
     init(previewMode: Bool = false) {
         // Preview renders must never take power assertions or touch pmset.
         antiSleep = AntiSleepManager(previewMode: previewMode)
+        mouse = MouseManager(previewMode: previewMode)
         converter = MediaConverterManager(requestNotifications: !previewMode)
         aiLimits = AILimitsManager(previewMode: previewMode)
         claudeSessions = ClaudeSessionsManager(previewMode: previewMode)
         cursorSessions = CursorSessionsManager(previewMode: previewMode)
         codexSessions = CodexSessionsManager(previewMode: previewMode)
         antigravitySessions = AntigravitySessionsManager(previewMode: previewMode)
-        if let modeRaw = UserDefaults.standard.string(forKey: "StatusDisplayMode"),
-            let mode = StatusItemDisplayMode(rawValue: modeRaw)
-        {
-            self.statusDisplayMode = mode
-        }
-
         if let iconRaw = UserDefaults.standard.string(forKey: "MenuBarIconStyle") {
             if let style = MenuBarIconStyle(rawValue: iconRaw) {
                 self.menuBarIconStyle = style
@@ -217,27 +204,21 @@ final class AppState: ObservableObject {
 
         // Forward changes that drive the menu bar icon / title (AppDelegate) and Settings.
         // Dashboard sections observe their own managers; fan / monitor / converter ticks are not forwarded.
-        antiSleep.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        // Anti-Sleep is not forwarded either: its countdown publishes every second, which would rebuild
+        // Settings while it is open. AppDelegate and the tiles observe it directly.
         network.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         battery.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         windowManager.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         universalControl.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(
             in: &cancellables)
-        claudeSessions.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        cursorSessions.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        codexSessions.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        antigravitySessions.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(
-            in: &cancellables)
+        // Session managers are not forwarded: they publish every 2 s while a session is live, and
+        // everything observing AppState (Settings, the header) would rebuild with them. The menu bar
+        // follows them through `sessionMenuMarksChanged`; dashboard sections observe them directly.
 
         ClipboardHUDWindowController.shared.setup(clipboardManager: clipboard)
         if !previewMode {
             systemMonitor.startHistorySampling()
         }
-    }
-
-    func setStatusDisplayMode(_ mode: StatusItemDisplayMode) {
-        self.statusDisplayMode = mode
-        UserDefaults.standard.set(mode.rawValue, forKey: "StatusDisplayMode")
     }
 
     func toggleLaunchAtLogin() {
@@ -263,7 +244,8 @@ final class AppState: ObservableObject {
     }
 
     var hasSessionAlert: Bool {
-        cursorSessions.hasUnseenEnded || codexSessions.hasUnseenEnded || antigravitySessions.hasUnseenEnded
+        claudeSessions.hasUnseenFinished || cursorSessions.hasUnseenEnded || codexSessions.hasUnseenEnded
+            || antigravitySessions.hasUnseenEnded
     }
 
     /// True while the Sessions page is the page on screen. The dashboard summary is not.
@@ -318,28 +300,13 @@ final class AppState: ObservableObject {
         return marks
     }
 
-    var menuBarTitle: String {
-        switch statusDisplayMode {
-        case .iconOnly:
-            return ""
-        case .iconAndAntiSleep:
-            if antiSleep.isActive {
-                return " ☕️ \(antiSleep.statusText)"
-            }
-            return ""
-        case .iconAndNetworkStatus:
-            let vpn = network.isVPNConnected ? "🟢 VPN" : "🔴 VPN"
-            let spoof = network.isSpoofDPIRunning ? "🟢 Spoof" : "🔴 Spoof"
-            return " \(vpn) | \(spoof)"
-        }
-    }
-
     func onPopoverWillShow() {
         systemMonitor.startMonitoring()
         network.startPolling()
         fanControl.startMonitoring()
         battery.refreshBatteryState()
         windowManager.refreshPermissions()
+        mouse.refreshPermissions()
         aiLimits.startMonitoring()
         claudeSessions.startMonitoring()
         cursorSessions.startMonitoring()
@@ -350,6 +317,7 @@ final class AppState: ObservableObject {
     }
 
     func onPopoverDidClose() {
+        mouse.cancelCapture()
         systemMonitor.stopMonitoring()
         network.stopPolling()
         aiLimits.stopMonitoring()

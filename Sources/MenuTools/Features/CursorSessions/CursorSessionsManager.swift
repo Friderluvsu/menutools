@@ -156,7 +156,8 @@ final class CursorSessionsManager: ObservableObject {
 
     /// Remember which ended rows are new. They stay blue, and the menu bar stays blue, until the row is on screen.
     private func noteFreshEnded() {
-        freshEnded = Set(ended.filter { !$0.seen }.map(\.id))
+        let fresh = Set(ended.filter { !$0.seen }.map(\.id))
+        if fresh != freshEnded { freshEnded = fresh }
     }
 
     /// The ended rows are visible. Clear the menu-bar blue and keep the blue row until the panel closes.
