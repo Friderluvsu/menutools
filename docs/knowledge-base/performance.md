@@ -17,8 +17,15 @@ Verified against the source at the time of writing.
 | Owner | Mechanism | Interval (tolerance) | Runs when |
 |---|---|---|---|
 | AILimitsManager | `Timer.scheduledTimer` | 300 s (30 s) | panel open (`onPopoverWillShow` / `onPopoverDidClose`) |
-| SystemMonitorManager | `Timer.publish` + one 0.7 s warm-up | 2.0 s (0.5 s) | panel open |
-| NetworkBypassManager | `Timer.publish` | 5.0 s (1.5 s) | panel open |
+| ClaudeSessionsManager | directory watcher on `~/.claude/sessions`, plus a `Timer` on `.common` | 2.0 s (0.5 s) while a session file is present or the panel is open; 15 s (4.5 s) otherwise | from launch. The watcher sees sessions start and exit; the timer sees status rewrites inside an existing file. A new wait posts "Claude needs input" once |
+| ClaudeTranscriptUsage | runs inside the Claude background tick above (never the synchronous read) | same 2 s / 15 s | per live session: a `stat` of the transcript, a read of only the bytes added since the last tick, and a listing of the `subagents` folder. The first pass reads the whole file (measured 2026-11-09, spot-checked: four live sessions, one with 36 subagent files, 1.5 s on the utility queue) |
+| CodexRolloutUsage | inside the Codex refresh | same 2 s / 15 s | one `stat` per live thread; the last 256 KB of the rollout are re-read only when the file grew |
+| CursorSessionsManager | `Timer` on `.common`, reading `composerHeaders` (+ cheap `composerData` json_extract for recent chats) | 2.0 s (0.5 s) while Cursor is running or the panel is open; 15 s (4.5 s) otherwise | from launch. Read-only. A watched run notifies when active-generation signals clear |
+| CodexSessionsManager | `Timer` on `.common`, walking live `codex` pids | 2.0 s (0.5 s) while a Codex process is live, a pid is tracked, or the panel is open; 15 s (4.5 s) otherwise | from launch. Process exit is the end |
+| AntigravitySessionsManager | `Timer` on `.common`, reading `conversation_summaries.db` | 2.0 s (0.5 s) while Antigravity/`agy` is running or the panel is open; 15 s (4.5 s) otherwise | from launch. Read-only. A watched conversation notifies when it goes idle |
+| SystemMonitorManager | `Timer.publish` + one 0.7 s warm-up | 2.0 s (0.5 s) | from launch. Keeps the last 10 minutes for the stat graphs. Tile values publish only while the panel is open. The same tick reads disk capacity. Process CPU and footprint are walked only while the CPU or Memory detail page is open |
+| NetworkBypassManager | `Timer.publish` | 5.0 s (1.5 s) | panel open. `scutil --nc status` only when a VPN id is known; a missing id is searched (`scutil --nc list`) at most every 5 min |
+| SystemMonitorManager latency probe | `Timer.publish`, one `/sbin/ping` | 3 s (1 s) | only while the Network page is open |
 | FanControlManager | `Timer.publish` | 2.0 s (0.6 s) foreground; 5.0 s (1.5 s) background | foreground: panel open. Background: only in curve mode while the panel is closed |
 | ClipboardManager | `Timer.publish` on `NSPasteboard.changeCount` | 1.0 s (0.5 s) | always, from launch |
 | UniversalControlManager | directory watcher on `~/Library/Preferences/ByHost` and a wake observer, plus a timer | 120 s (36 s) with the watcher; 15 s (4.5 s) if the watcher cannot open | only while auto-enable is on |
@@ -30,11 +37,13 @@ Verified against the source at the time of writing.
 | WindowManager animation | `DispatchSourceTimer` on `animationQueue` | 16 ms, 0.22 s total | during a window resize |
 | ClipboardManager filter | Combine debounce | 120 ms | while the search text changes |
 | AppDelegate | KVO on `NSApp.effectiveAppearance`; `DispatchSourceSignal` for SIGTERM | event-driven | always |
+| Settings prewarm | one `asyncAfter` 0.6 s after the dashboard first appears, then a `Task` mounting one page per 40 ms after 350 ms | once per process | builds the Settings graph hidden; it stays mounted. Measured 2026-11-09 (release, `--render-preview` `Preview build`): Settings on the click cost 380–440 ms against 150–250 ms for the dashboard alone; the sample showed SwiftUI layout of the page graph, not one control. With the graph prebuilt the click only animates opacity |
 
 Notes:
 - Panel-scoped polling is started and stopped only by `AppState.onPopoverWillShow` and `onPopoverDidClose`. Do not start a new timer from a view's `onAppear`.
 - The always-on items are cheap: one `changeCount` read per second, the event tap's window-bounds pre-check, and the shelf's throttled compare. Keep new always-on work at that level.
 - Any new timer must set its tolerance explicitly.
+- Session timers are added to `RunLoop.Mode.common`. A `.default`-mode timer does not fire while another app is tracking the mouse, which left the menu bar ring unchanged until the panel opened. `AppDelegate` also holds a `userInitiatedAllowingIdleSystemSleep` activity so App Nap does not defer those timers while no window is open.
 
 ## Baseline (before the overhaul)
 
@@ -79,6 +88,15 @@ Release build, macOS 27.2, arm64.
 - No leak per open/close: 30 cycles moved the footprint by under 1 MB.
 - Releasing the panel after close was tried and dropped. The hosting view deallocated, but the footprint did not fall, even after `malloc_zone_pressure_relief`: freed pages stay dirty in the malloc zone, and Swift type metadata and ObjC method caches (about 2 MB) stay for the life of the process. Rebuilding cost 50–80 ms on the next open.
 - A 27 h instance (installed build of `a796370`) measured 64.8 MB footprint, but only 19.9 MB RSS (most of it compressed) and 195 s CPU in total (about 0.2% average). Its heap held 3–4 times more SwiftUI graph objects than a fresh open (for example 2904 against 780 `AnyTrackedValue` dictionaries). The source was not identified: Settings pages, pickers, the shelf panel and the clipboard HUD build view graphs on demand and keep them. Next step: run `leaks <pid>` and `heap <pid>` on a long-running instance before restarting it.
+
+## Open-panel CPU fix (2026-11-05)
+
+Measured with `sample` on a release build while the panel was open.
+- Before: 40–60% CPU. The Sessions summary's neon border used a SwiftUI `repeatForever` rotation (three angular gradients plus a blur). It re-rendered and laid out the whole panel every frame, and kept doing so under stat pages, Sessions and Settings, where the dashboard stays mounted at zero opacity.
+- First fix (30 fps `TimelineView`, paused off the dashboard): 15–25%.
+- Now: about 3%. The border is a Core Animation rotation (`NeonBorderNSView`), so the window server animates it and SwiftUI does no per-frame work. It is removed while the dashboard is hidden (`\.dashboardOnScreen`) and under Reduce Motion.
+- Session polls: `ProcessLookup` remembers the last matching pid, so a repeat check is one syscall instead of a walk over every process. Antigravity and Cursor misses are trusted for 4 s. The Antigravity scan reuses its last read while the database and WAL are unchanged (mtime and size). Cursor does the same, but a reused read expires after 10 s because its windows depend on the clock. Antigravity date formatters are built once.
+- Stat pages: the Top list used `.contentTransition(.numericText())` on ranks and values. SwiftUI rasterises those rolls on the CPU (a blurred offscreen layer plus a colour-space conversion per frame), and the list re-ranks every 2 s. That alone was 25–45% CPU on the CPU page. The rows now update without the roll.
 
 ## Build and verification record
 

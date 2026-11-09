@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// Collects subscription usage for Claude Code, Codex and Antigravity.
-/// Everything is read locally (CLI credentials / local language server) — no extra login.
+/// Collects subscription usage for Claude Code, Codex, Antigravity and Cursor.
+/// Everything is read locally (CLI credentials / local session) — no extra login.
 @MainActor
 final class AILimitsManager: ObservableObject {
     @Published private(set) var usage: [AIProvider: AIProviderUsage] = [:]
@@ -62,7 +62,7 @@ final class AILimitsManager: ObservableObject {
         }
     }
 
-    /// Opens Terminal on the provider's own CLI so it renews its login; we never touch the tokens.
+    /// Asks the provider to renew its own login in Terminal. MenuTools never writes a provider token.
     func openLoginTerminal(for provider: AIProvider) {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("MenuTools-\(provider.rawValue)-login.command")
@@ -215,6 +215,7 @@ final class AILimitsManager: ObservableObject {
         case .claude: return await ClaudeUsageFetcher.fetch()
         case .codex: return await CodexUsageFetcher.fetch()
         case .antigravity: return await AntigravityUsageFetcher.fetch()
+        case .cursor: return await CursorUsageFetcher.fetch()
         }
     }
 
@@ -237,6 +238,12 @@ final class AILimitsManager: ObservableObject {
                 windows: [
                     AIUsageWindow(label: "Gemini Pro", usedFraction: 0.3, resetsAt: now.addingTimeInterval(3 * 3600)),
                     AIUsageWindow(label: "Claude", usedFraction: 0.75, resetsAt: now.addingTimeInterval(5 * 3600)),
+                ],
+                status: .ok, fetchedAt: now),
+            .cursor: AIProviderUsage(
+                provider: .cursor, plan: "PRO",
+                windows: [
+                    AIUsageWindow(label: "Included", usedFraction: 0.42, resetsAt: now.addingTimeInterval(12 * 86400)),
                 ],
                 status: .ok, fetchedAt: now),
         ]

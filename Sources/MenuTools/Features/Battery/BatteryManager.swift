@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import IOKit
 import IOKit.ps
 
 @MainActor
@@ -10,6 +11,16 @@ final class BatteryManager: ObservableObject {
     @Published var isLowPowerMode: Bool = false
     @Published var hasBattery: Bool = false
     @Published var timeRemainingFormatted: String?
+    /// "94%" when design and nominal capacity are both known, otherwise Good / Fair / Poor.
+    @Published var healthText: String?
+    @Published var cycleCount: Int?
+    @Published var powerWatts: Double?
+    @Published var batteryTemperatureC: Double?
+    @Published var capacityMaxMah: Int?
+    @Published var capacityDesignMah: Int?
+    @Published var voltageMillivolts: Int?
+    /// Signed. Positive is charging, negative is discharging.
+    @Published var currentMilliamps: Int?
 
     private var runLoopSource: CFRunLoopSource?
     private var cancellables = Set<AnyCancellable>()
@@ -36,7 +47,7 @@ final class BatteryManager: ObservableObject {
         guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
             let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef], !list.isEmpty
         else {
-            apply(found: false, percentage: 100, charging: nil, pluggedIn: true, remaining: nil)
+            apply(found: false, percentage: 100, charging: nil, pluggedIn: true, remaining: nil, extras: nil)
             return
         }
 
@@ -68,20 +79,106 @@ final class BatteryManager: ObservableObject {
                 percentage: max(0, min(100, pct)),
                 charging: charging,
                 pluggedIn: (state == (kIOPSACPowerValue as String)) || charging,
-                remaining: remaining
+                remaining: remaining,
+                extras: Self.extras(from: desc)
             )
             return
         }
 
-        apply(found: false, percentage: percentage, charging: nil, pluggedIn: isPluggedIn, remaining: nil)
+        apply(found: false, percentage: percentage, charging: nil, pluggedIn: isPluggedIn, remaining: nil, extras: nil)
     }
 
-    private func apply(found: Bool, percentage: Int, charging: Bool?, pluggedIn: Bool, remaining: String?) {
+    private struct Extras {
+        var health: String?
+        var cycles: Int?
+        var watts: Double?
+        var temperature: Double?
+        var capacityMax: Int?
+        var capacityDesign: Int?
+        var millivolts: Int?
+        var milliamps: Int?
+    }
+
+    /// Health, cycles, watts and temperature. IOPS is sparse on Apple batteries; the
+    /// AppleSmartBattery registry entry carries the rest and is read on the same power event.
+    private static func extras(from desc: [String: Any]) -> Extras {
+        let registry = smartBattery()
+        func value(_ key: String) -> Int? { number(registry, key) ?? number(desc, key) }
+
+        var health: String?
+        let design = value("DesignCapacity")
+        let full = value("AppleRawMaxCapacity") ?? value("NominalChargeCapacity") ?? value(kIOPSNominalCapacityKey as String)
+        if let design, let full, design > 100, full > 0 {
+            let percent = Int((Double(full) / Double(design) * 100).rounded())
+            if (40...100).contains(percent) { health = "\(percent)%" }
+        }
+        if health == nil, let word = desc[kIOPSBatteryHealthKey as String] as? String, !word.isEmpty {
+            health = word
+        }
+
+        let cycles = value("CycleCount") ?? number(desc, "Cycle Count")
+
+        var watts: Double?
+        let millivolts = value("Voltage")
+        let milliamps = value("Amperage") ?? number(desc, kIOPSCurrentKey as String)
+        if let millivolts, let milliamps, millivolts > 0, milliamps != 0, abs(milliamps) < 20_000 {
+            watts = Double(abs(milliamps)) * Double(millivolts) / 1_000_000
+        }
+
+        var temperature: Double?
+        if let raw = value("Temperature") {
+            let celsius = raw > 200 ? Double(raw) / 100 : Double(raw)
+            if (10...80).contains(celsius) { temperature = celsius }
+        }
+
+        let designMah = design.flatMap { $0 > 100 ? $0 : nil }
+        let maxMah = full.flatMap { $0 > 100 ? $0 : nil }
+        return Extras(
+            health: health,
+            cycles: cycles.flatMap { $0 > 0 ? $0 : nil },
+            watts: watts,
+            temperature: temperature,
+            capacityMax: maxMah,
+            capacityDesign: designMah,
+            millivolts: millivolts.flatMap { $0 > 0 ? $0 : nil },
+            milliamps: milliamps.flatMap { abs($0) < 20_000 ? $0 : nil })
+    }
+
+    private static func smartBattery() -> [String: Any] {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard service != 0 else { return [:] }
+        defer { IOObjectRelease(service) }
+        var unmanaged: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &unmanaged, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+            let unmanaged
+        else { return [:] }
+        return unmanaged.takeRetainedValue() as? [String: Any] ?? [:]
+    }
+
+    private static func number(_ desc: [String: Any], _ key: String) -> Int? {
+        guard let number = desc[key] as? NSNumber else { return nil }
+        let bits = number.uint64Value
+        // Negative current is stored as a full-width unsigned value.
+        if bits > UInt64(Int64.max) { return Int(Int64(bitPattern: bits)) }
+        return Int(truncatingIfNeeded: bits)
+    }
+
+    private func apply(
+        found: Bool, percentage: Int, charging: Bool?, pluggedIn: Bool, remaining: String?, extras: Extras?
+    ) {
         if self.percentage != percentage { self.percentage = percentage }
         if let charging, isCharging != charging { isCharging = charging }
         if isPluggedIn != pluggedIn { isPluggedIn = pluggedIn }
         if timeRemainingFormatted != remaining { timeRemainingFormatted = remaining }
         if hasBattery != found { hasBattery = found }
+        if healthText != extras?.health { healthText = extras?.health }
+        if cycleCount != extras?.cycles { cycleCount = extras?.cycles }
+        if powerWatts != extras?.watts { powerWatts = extras?.watts }
+        if batteryTemperatureC != extras?.temperature { batteryTemperatureC = extras?.temperature }
+        if capacityMaxMah != extras?.capacityMax { capacityMaxMah = extras?.capacityMax }
+        if capacityDesignMah != extras?.capacityDesign { capacityDesignMah = extras?.capacityDesign }
+        if voltageMillivolts != extras?.millivolts { voltageMillivolts = extras?.millivolts }
+        if currentMilliamps != extras?.milliamps { currentMilliamps = extras?.milliamps }
     }
 
     private func setupPowerNotification() {

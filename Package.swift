@@ -15,7 +15,10 @@ let package = Package(
         .executableTarget(
             name: "MenuTools",
             dependencies: [],
-            path: "Sources/MenuTools"
+            path: "Sources/MenuTools",
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .executableTarget(
             name: "MenuToolsSMCHelper",

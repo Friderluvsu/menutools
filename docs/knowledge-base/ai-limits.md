@@ -2,7 +2,7 @@
 
 Source: `Sources/MenuTools/Features/AILimits/` (`AILimitsManager`, `AIUsageFetchers`, `AILimitsCache`, `AILimitsModels`) and `Views/Components/AILimitsCard.swift`.
 
-Everything is read-only and needs no extra login. MenuTools never refreshes or writes a provider's token. All three endpoints are undocumented internal APIs, so every response field is optional.
+Everything is read-only and needs no extra login. MenuTools never refreshes or writes a provider's token. Claude Code, Codex and Antigravity use undocumented internal APIs, so every response field is optional. Cursor is read from the `agent` CLI only.
 
 ## Sources at a glance
 
@@ -11,6 +11,7 @@ Everything is read-only and needs no extra login. MenuTools never refreshes or w
 | Claude Code | Keychain item `Claude Code…credentials` (secret read via `/usr/bin/security`) or `$CLAUDE_CONFIG_DIR/.credentials.json` / `~/.claude/.credentials.json` | `GET https://api.anthropic.com/api/oauth/usage` | none; expired token shows "Login expired" |
 | Codex | `$CODEX_HOME/auth.json` or `~/.codex/auth.json` (`tokens.access_token`, `tokens.account_id`) | `GET https://chatgpt.com/backend-api/wham/usage` | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (last 7 days) |
 | Antigravity | IDE language server (process arguments) or agy CLI token | local RPC, then `cloudcode-pa.googleapis.com` | agy CLI token; expired token → `agy -p /usage` |
+| Cursor | Cursor CLI login | `agent about --format json`, with the CLI's own client also reading period usage | none |
 
 ## Claude Code
 
@@ -30,8 +31,13 @@ Everything is read-only and needs no extra login. MenuTools never refreshes or w
 **Response fields.**
 - `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`: objects with `utilization` (0–100, divided by 100 in code) and `resets_at` (ISO-8601).
 - `limits[]`: entries with `kind == "weekly_scoped"`, `percent`, `resets_at`, `scope.model.display_name`. When present these replace the `seven_day_*` fields.
+- Enterprise / Team seats often have those windows as `null`. The same payload still has:
+  - a dollar pool object (obfuscated key) with `utilization`, `limit_dollars` / `used_dollars`, `resets_at` → **Included**
+  - `extra_usage` (`is_enabled`, `monthly_limit` and `used_credits` in cents, `utilization`) and `spend` (`enabled`, `percent`, `used` / `limit` with `amount_minor`) → **Spend**, only when extra usage is on and a limit is set. Spend has no reset time in this API.
 
-**Labels.** `Session` (five-hour), `Week`, then either `Week Opus` / `Week Sonnet` or `Week <model name>`.
+`claude /usage` is TUI-only (`-p` is not available). Do not spawn it; the OAuth endpoint is the source.
+
+**Labels.** `Session` (five-hour), `Week`, then either `Week Opus` / `Week Sonnet` or `Week <model name>`. Enterprise adds `Included` and `Spend` when the consumer windows are empty (or alongside them when usage credits are on).
 
 **Plan.** `rateLimitTier` containing `max_20x` → `MAX 20×`; `max_5x` → `MAX 5×`; otherwise `subscriptionType` in uppercase.
 
@@ -67,6 +73,18 @@ Parsing: `groups[]` with `displayName` and `buckets[]` (`remainingFraction` or `
    - Headers: `Authorization: Bearer <token>`, `Content-Type: application/json`, `User-Agent: antigravity/hub/2.9.1 darwin/arm64`. Timeout 10 s.
 4. A stale token runs `agy -p /usage --output-format json` (90 s timeout, run in the temp directory). agy refreshes its own token. MenuTools then re-reads the token and calls cloud again, or parses agy's JSON output.
 5. agy is looked up at `~/.local/bin/agy`, `/opt/homebrew/bin/agy`, `/usr/local/bin/agy`.
+
+## Cursor
+
+MenuTools does not call Cursor's HTTP APIs and does not read `state.vscdb`. It runs the Cursor CLI: explicit arguments, no shell, timeout 25 s, from the temp directory.
+
+The binary is the first executable of `~/.local/bin/agent`, `/opt/homebrew/bin/agent`, `/usr/local/bin/agent`. A missing binary is `Install the Cursor CLI`.
+
+`agent about --format json` is the only scriptable account command. On its own it returns `subscriptionTier` and an email. MenuTools loads `Resources/cursor-usage-hook.js` with `NODE_OPTIONS=--require` and `NODE_DISABLE_COMPILE_CACHE=1`. The hook runs inside that CLI process and asks the CLI's own dashboard client for the same period usage as the interactive `/usage` command (`getCurrentPeriodUsage`). It adds a `usage` object to the JSON and replaces the email with null before anything is printed.
+
+`subscriptionTier` is the plan: `pro` → `PRO`, `pro_plus` / `pro+` → `PRO+`, `ultra` → `ULTRA`, `free` / `hobby` → `FREE`, `business` / `team` → `TEAM`, anything else uppercased. No plan is `Login expired — run agent login`. **Run** opens Terminal on `agent login`.
+
+`usage` fields, each 0–100: `totalPercentUsed` → **Included**, `autoPercentUsed` → **Auto**, `apiPercentUsed` → **API**, `onDemandPercentUsed` → **On-demand** (omitted when there is no spend cap). The card shows the two fullest. `billingCycleEnd` is unix milliseconds and is the reset for every window. A missing `usage` object, or `usage.error`, is `Couldn't read Cursor usage`. The hook matches this CLI build's `about` command text; a CLI update that rewrites that text fails the same way until the hook is updated.
 
 ## Cache, stale and rollover
 
@@ -107,9 +125,12 @@ File: `~/Library/Application Support/MenuTools/ai-limits-cache.json` (version 1,
 | `Language server port not found` / `Language server did not respond` | Antigravity | IDE running but its RPC is unreachable | the CLI path is tried next |
 | `Open Antigravity or sign in with agy` | Antigravity | neither IDE nor CLI token found | not connected |
 | `Not connected` (`notConnected`) | Claude / Codex | no credentials file or Keychain item | sign in with the CLI |
+| `Install the Cursor CLI` | Cursor | `agent` not found on the known paths | install the CLI |
+| `Login expired — run agent login` | Cursor | `agent about` returned no plan | Run button opens Terminal on `agent login` |
+| `Couldn't read Cursor usage` | Cursor | `agent about` failed, or the usage hook did not return percents | retry; the CLI needs a network connection. A CLI update can also break the hook |
 
 The Run button (`openLoginTerminal`) writes a temp `.command` file, opens it in Terminal, and clears the back-off so the next panel open retries right away.
 
 ## Diagnostics
 
-`MenuTools --ai-limits-diagnose` prints one line per check: Keychain scan result, service names, token presence and expiry in minutes, IDE running, agy path, per-provider status and windows, and cache age. No token or secret is printed, but the Keychain secret is read in-process. Run it only when the user asks.
+`MenuTools --ai-limits-diagnose` prints one line per check: Keychain scan result, service names, token presence and expiry in minutes, IDE running, agy path, whether the Cursor CLI is installed (no email), per-provider status and windows, and cache age. No token or secret is printed, but the Keychain secret is read in-process for Claude and Antigravity. Run it only when the user asks.

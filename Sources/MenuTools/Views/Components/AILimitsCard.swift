@@ -55,6 +55,7 @@ struct AILimitsCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
+            .suppressesFocusRing()
             .disabled(manager.isRefreshing)
             .help("Refresh")
         }
@@ -68,11 +69,13 @@ private extension AIProvider {
         case .claude: return "Claude"
         case .codex: return "Codex"
         case .antigravity: return "Antigravity"
+        case .cursor: return "Cursor"
         }
     }
 }
 
 private struct AIProviderRow: View {
+    @Environment(\.appTheme) private var theme
     let provider: AIProvider
     let usage: AIProviderUsage?
     let now: Date
@@ -110,7 +113,7 @@ private struct AIProviderRow: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, minHeight: 30)
-        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+        .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(6)))
         .help(tooltip)
     }
 
@@ -165,15 +168,23 @@ private struct AIProviderRow: View {
         }
     }
 
-    /// One tap to let the provider's CLI renew its own login in Terminal.
+    /// One tap so the provider renews its own login: Terminal for the CLIs, the app itself for Cursor.
     private var loginButton: some View {
         Button(action: onLogin) {
-            Label("Run", systemImage: "terminal")
-                .font(.system(size: 10.5, weight: .medium))
+            Label(
+                provider.renewsInTerminal ? "Run" : "Open",
+                systemImage: provider.renewsInTerminal ? "terminal" : "arrow.up.forward.app"
+            )
+            .font(.system(size: 10.5, weight: .medium))
         }
         .buttonStyle(.bordered)
+        .suppressesFocusRing()
         .controlSize(.small)
-        .help("Run \(provider.loginCommand) in Terminal")
+        .help(
+            provider.renewsInTerminal
+                ? "Run \(provider.loginCommand) in Terminal"
+                : "Open Cursor"
+        )
     }
 
     private static func needsLogin(_ message: String) -> Bool {

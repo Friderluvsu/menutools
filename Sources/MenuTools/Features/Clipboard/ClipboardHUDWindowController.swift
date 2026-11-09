@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 final class ClipboardHUDPanel: NSPanel {
@@ -14,6 +15,7 @@ final class ClipboardHUDWindowController {
     private var clipboardManager: ClipboardManager?
     private var previousApp: NSRunningApplication?
     private var resignObserver: NSObjectProtocol?
+    private var appearanceCancellable: AnyCancellable?
 
     func setup(clipboardManager: ClipboardManager) {
         self.clipboardManager = clipboardManager
@@ -62,8 +64,14 @@ final class ClipboardHUDWindowController {
             panel.hasShadow = true
             panel.animationBehavior = .utilityWindow
 
-            let hostingView = NSHostingView(rootView: ClipboardHUDView(clipboardManager: manager))
+            // Themed like the panel: the host injects the theme, and catalog themes force the dark
+            // appearance so AppKit controls (the search field) match.
+            let hostingView = NSHostingView(rootView: ThemeHost { ClipboardHUDView(clipboardManager: manager) })
             panel.contentView = hostingView
+            appearanceCancellable = ThemeManager.shared.$theme
+                .map(\.appearance)
+                .removeDuplicates()
+                .sink { [weak panel] name in panel?.appearance = name.flatMap(NSAppearance.init(named:)) }
 
             // Auto-hide when user clicks outside the HUD panel
             resignObserver = NotificationCenter.default.addObserver(
@@ -77,9 +85,6 @@ final class ClipboardHUDWindowController {
             }
 
             self.window = panel
-        } else if let panel = window, let hostingView = panel.contentView as? NSHostingView<ClipboardHUDView> {
-            // Force re-evaluate SwiftUI hierarchy with latest state
-            hostingView.rootView = ClipboardHUDView(clipboardManager: manager)
         }
 
         if let win = window {
