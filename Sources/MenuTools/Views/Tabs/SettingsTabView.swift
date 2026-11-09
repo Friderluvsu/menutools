@@ -193,6 +193,7 @@ private struct SettingsSectionPage: View {
             case .general:
                 generalCard
                 shelfCard
+                ClipboardSettingsCard(clipboard: appState.clipboard)
                 AILimitsSettingsCard(manager: appState.aiLimits)
                 appInfoCard
             case .look:
@@ -580,6 +581,7 @@ private struct SettingsSectionPage: View {
     private var shortcutsCard: some View {
         SettingsCard(title: "Shortcuts", icon: "keyboard", color: .purple) {
             ShortcutRow(shortcut: "⌥⌘V", description: "Clipboard")
+            ShortcutRow(shortcut: "⇧⌥⌘V", description: "Paste plain")
             ShortcutRow(shortcut: "↑ ↓", description: "Previous / next chat")
             ShortcutRow(shortcut: "⌥⌫", description: "Delete chat")
             ShortcutRow(shortcut: "Green click", description: "Maximize")
@@ -920,6 +922,27 @@ private struct RequirementRow: View {
         }
         .frame(minHeight: 22)
         .help(help ?? "")
+    }
+}
+
+private struct ClipboardSettingsCard: View {
+    @ObservedObject var clipboard: ClipboardManager
+
+    var body: some View {
+        SettingsCard(title: "Clipboard", icon: "doc.on.clipboard", color: .secondary) {
+            SettingsRow(title: "Images") {
+                Toggle("", isOn: $clipboard.captureImages)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            SettingsRow(title: "Files") {
+                Toggle("", isOn: $clipboard.captureFiles)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            SettingsRow(title: "Plain paste ⇧⌥⌘V") {
+                Toggle("", isOn: $clipboard.plainPasteHotkey)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+        }
     }
 }
 

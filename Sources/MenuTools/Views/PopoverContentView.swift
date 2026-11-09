@@ -1286,7 +1286,7 @@ private struct ClipboardCard: View {
                     Label("Clipboard", systemImage: "doc.on.clipboard")
                         .font(.system(size: 10.5, weight: .semibold))
                     if clipboard.items.isEmpty {
-                        Text("Copied text shows here")
+                        Text("Copies show here")
                             .font(.system(size: 9.5))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -1301,7 +1301,7 @@ private struct ClipboardCard: View {
                 .padding(.horizontal, 1)
 
                 ForEach(Array(clipboard.items.prefix(3).enumerated()), id: \.element.id) { index, item in
-                    ClipRow(index: index, item: item) {
+                    ClipRow(index: index, item: item, icon: clipboard.icon(for: item)) {
                         clipboard.copyAndPaste(item: item, simulatePaste: false)
                         toast("Copied")
                     }
@@ -1315,6 +1315,7 @@ private struct ClipRow: View {
     @Environment(\.appTheme) private var theme
     let index: Int
     let item: ClipboardItem
+    var icon: NSImage?
     let action: () -> Void
 
     var body: some View {
@@ -1328,6 +1329,13 @@ private struct ClipRow: View {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 8))
                         .foregroundStyle(.secondary)
+                }
+                if let icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 14, height: 14)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
                 }
                 Text(item.snippet)
                     .font(.system(size: 10))

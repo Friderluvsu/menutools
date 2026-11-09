@@ -555,11 +555,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let vKeyCode: UInt32 = 9
         let modifiers: UInt32 = UInt32(cmdKey | optionKey)
 
-        CarbonHotKeyHelper.shared.register(keyCode: vKeyCode, modifiers: modifiers) {
+        CarbonHotKeyHelper.shared.register(id: 1, keyCode: vKeyCode, modifiers: modifiers) {
             Task { @MainActor in
                 ClipboardHUDWindowController.shared.toggle()
             }
         }
+
+        // ⇧⌥⌘V: paste as plain text (registered only while the setting is on)
+        appState.clipboard.updatePlainPasteHotkey()
     }
 
     private func updateStatusItemIcon() {

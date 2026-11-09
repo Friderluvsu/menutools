@@ -45,6 +45,22 @@ if let previewFlagIndex = CommandLine.arguments.firstIndex(of: "--render-preview
     exit(rendered ? 0 : 1)
 }
 
+if let hudFlag = CommandLine.arguments.firstIndex(of: "--render-clipboard-hud"),
+    CommandLine.arguments.indices.contains(hudFlag + 1)
+{
+    let outputURL = URL(fileURLWithPath: CommandLine.arguments[hudFlag + 1])
+    let rendered = MainActor.assumeIsolated {
+        if let themeFlag = CommandLine.arguments.firstIndex(of: "--theme"),
+            CommandLine.arguments.indices.contains(themeFlag + 1),
+            let theme = AppThemeID(rawValue: CommandLine.arguments[themeFlag + 1])
+        {
+            ThemeManager.shared.previewOverride(theme)
+        }
+        return PreviewRenderer.renderClipboardHUD(to: outputURL)
+    }
+    exit(rendered ? 0 : 1)
+}
+
 if let lightsFlag = CommandLine.arguments.firstIndex(of: "--render-status-lights"),
     CommandLine.arguments.indices.contains(lightsFlag + 1)
 {
@@ -66,6 +82,12 @@ if let batteryIconsFlagIndex = CommandLine.arguments.firstIndex(of: "--render-ba
 if CommandLine.arguments.contains("--anti-sleep-diagnose") {
     // Exercises both sessions for real (assertions, and pmset disablesleep via the helper), then restores.
     MainActor.assumeIsolated { AntiSleepDiagnose.run() }
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--session-usage-diagnose") {
+    // Token totals per live Claude / Codex session from their logs. Counts only, no text.
+    for line in ClaudeTranscriptUsage.shared.diagnose() { print(line) }
     exit(0)
 }
 

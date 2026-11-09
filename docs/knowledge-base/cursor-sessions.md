@@ -46,7 +46,7 @@ The card header uses Cursor.app's icon when that app is installed, otherwise the
 
 ## Fields the card shows
 
-The row shows the chat name, the status word, a project chip and uptime. The last-edit subtitle stays off the row. A chevron opens a details drawer (name, project, path, composer id, mode, activity, files changed). Only one drawer is open across the session cards. Opening it animates the height. A click on the row, not the chevron, raises Cursor.
+The row shows the chat name, the status word, a project chip, a context badge (`11% ctx`, from `composerData.contextTokensUsed` / `contextTokenLimit`; see [session-usage.md](session-usage.md)) and uptime. The last-edit subtitle stays off the row. A chevron opens a details drawer (name, project, context, path, composer id, mode, activity, files changed). Only one drawer is open across the session cards. Opening it animates the height. A click on the row, not the chevron, raises Cursor.
 
 | JSON | Where |
 |---|---|

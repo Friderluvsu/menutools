@@ -17,6 +17,8 @@ struct CursorSession: Identifiable, Equatable, Sendable {
     let waitingFor: String?
     let startedAt: Date?
     let filesChanged: Int
+    /// Context fill from `composerData` (`contextTokensUsed` / `contextTokenLimit`). Cursor logs no spend.
+    var usage: SessionUsage? = nil
 
     var needsInput: Bool { waitingFor != nil }
 
@@ -76,7 +78,8 @@ struct CursorSession: Identifiable, Equatable, Sendable {
             status: "running",
             waitingFor: nil,
             startedAt: Date(timeIntervalSinceNow: -48 * 60),
-            filesChanged: 4
+            filesChanged: 4,
+            usage: SessionUsage(context: 27_680, contextLimit: 256_000)
         ),
         CursorSession(
             id: "66666666-7777-4888-8999-aaaaaaaaaaaa",
@@ -237,6 +240,9 @@ struct ComposerGeneration: Sendable {
     var headerPlan: Bool = false
     /// Open AskQuestion (or similar) tool still waiting on the user.
     var awaitsQuestion: Bool = false
+    /// Context window fill Cursor shows in its own usage pill.
+    var contextTokensUsed: Int? = nil
+    var contextTokenLimit: Int? = nil
 
     /// Cursor's own `generating` flag: status is generating, or generatingBubbleIds is non-empty.
     var isGeneratingFlag: Bool {
@@ -372,7 +378,10 @@ extension CursorSession {
             status: running && !waiting ? "running" : "waiting",
             waitingFor: waitingFor,
             startedAt: Self.milliseconds(header["createdAt"]),
-            filesChanged: Self.int(header["filesChangedCount"])
+            filesChanged: Self.int(header["filesChangedCount"]),
+            usage: generation.contextTokensUsed.map { used in
+                SessionUsage(context: used, contextLimit: generation.contextTokenLimit)
+            }
         )
     }
 
@@ -455,7 +464,9 @@ private final class CursorHeaderDB {
               json_extract(CAST(value AS TEXT), '$.status'),
               json_extract(CAST(value AS TEXT), '$.generatingBubbleIds'),
               json_extract(CAST(value AS TEXT), '$.hasBlockingPendingActions'),
-              json_extract(CAST(value AS TEXT), '$.hasPendingPlan')
+              json_extract(CAST(value AS TEXT), '$.hasPendingPlan'),
+              json_extract(CAST(value AS TEXT), '$.contextTokensUsed'),
+              json_extract(CAST(value AS TEXT), '$.contextTokenLimit')
             FROM cursorDiskKV WHERE key = ?
             """
         var statement: OpaquePointer?
@@ -483,7 +494,9 @@ private final class CursorHeaderDB {
             status: status.flatMap { $0.isEmpty ? nil : $0 },
             hasGeneratingBubbles: hasBubbles,
             dataBlocking: Self.columnBool(statement, 4),
-            dataPlan: Self.columnBool(statement, 5)
+            dataPlan: Self.columnBool(statement, 5),
+            contextTokensUsed: Self.columnDouble(statement, 6).map { Int($0) },
+            contextTokenLimit: Self.columnDouble(statement, 7).map { Int($0) }
         )
     }
 

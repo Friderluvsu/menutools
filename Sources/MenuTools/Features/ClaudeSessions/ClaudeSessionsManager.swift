@@ -12,6 +12,9 @@ final class ClaudeSessionsManager: ObservableObject {
     @Published private(set) var finished: [String: ClaudeFinish] = [:]
     /// Finished ids that were unseen when this panel open started. They stay blue until the panel closes.
     @Published private(set) var freshFinished: Set<String> = []
+    /// Tokens and estimated cost per live session (keyed by pid), summed from its transcript on
+    /// background ticks. Empty until the first background read.
+    @Published private(set) var usage: [String: SessionUsage] = [:]
 
     var hasUnseenFinished: Bool { finished.values.contains { !$0.seen } }
 
@@ -41,6 +44,7 @@ final class ClaudeSessionsManager: ObservableObject {
     private var restoredRuns: Set<String> = []
     private var loading = false
     private var refreshAgain = false
+    private var usageLoading = false
 
     /// A run shorter than this finishing is not announced (quick replies).
     private static let minimumRun: TimeInterval = 10
@@ -57,6 +61,7 @@ final class ClaudeSessionsManager: ObservableObject {
             if let last = sessions.last(where: { !$0.isWorking && !$0.needsInput }) {
                 finished[last.id] = ClaudeFinish(finishedAt: Date().addingTimeInterval(-90), ranFor: 240, seen: false)
             }
+            if let first = sessions.first { usage[first.id] = .claudeSample }
             return
         }
         loadInputWatch()
@@ -134,10 +139,26 @@ final class ClaudeSessionsManager: ObservableObject {
                 guard let self else { return }
                 self.loading = false
                 self.apply(loaded)
+                self.refreshUsage(for: loaded)
                 if self.refreshAgain {
                     self.refreshAgain = false
                     self.refresh(inBackground: true)
                 }
+            }
+        }
+    }
+
+    /// Transcript bytes added since the last tick, on its own task so a first pass over a large
+    /// transcript never holds up a status change or a "needs input" notification.
+    private func refreshUsage(for sessions: [ClaudeSession]) {
+        guard !usageLoading else { return }
+        usageLoading = true
+        Task.detached(priority: .utility) { [weak self] in
+            let usage = ClaudeTranscriptUsage.shared.usage(for: sessions)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.usageLoading = false
+                if usage != self.usage { self.usage = usage }
             }
         }
     }

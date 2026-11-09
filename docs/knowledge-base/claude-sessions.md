@@ -28,6 +28,8 @@ The row shows the chat name, the status word, a project chip and uptime. A chevr
 
 Hover also lists those facts. A click walks the parent process chain and activates the first regular app (the terminal Claude is running in).
 
+The row also shows a cost badge (`~$4.12`, an estimate at API rates) before the uptime, and the drawer adds Tokens, In / out, Cache, Cost, Model and Context rows summed from the session's transcript and subagent transcripts. See [session-usage.md](session-usage.md).
+
 Claude Code writes `status` from the **main** loop (`running` → `busy`, `requires_action` → `waiting`, otherwise `idle`). Waiting on a subagent leaves the main loop idle, so the card also reads `$CLAUDE_CONFIG_DIR/projects/<cwd with / → ->/<sessionId>/subagents/*.meta.json`. A meta file without `"finished": true` counts as active work; the jsonl transcripts are not opened.
 
 ## Liveness

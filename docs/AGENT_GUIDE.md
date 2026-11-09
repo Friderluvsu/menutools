@@ -25,7 +25,8 @@ It lives as a status item. Clicking the icon opens a custom `NSPanel` (not `NSPo
 | Anti-sleep | Awake (`IOPMAssertion`) and Closed-lid (`pmset disablesleep` via helper, battery guard); sessions resume after relaunch |
 | Network | VanyaVPN (`scutil`) + SpoofDPI SOCKS proxy |
 | Low Power Mode | Via SMC helper / `pmset` |
-| Clipboard | History + ⌥⌘V HUD |
+| Clipboard | History of text, images and file lists + themed ⌥⌘V HUD; ⇧⌥⌘V paste as plain text |
+| Session usage | Tokens, estimated cost and context per agent session row, from Claude transcripts, Codex rollouts and Cursor composer data |
 | Window controls | Green = maximize on current Space; red = quit when last window closes |
 | iMessage | Shortcuts while Messages is frontmost (event tap) |
 | System utils | Eject disks, Empty Trash, Google Drive FinderSync reset |
@@ -209,6 +210,8 @@ Run: `build/MenuTools.app/Contents/MacOS/MenuTools <flag>`
 | `--render-battery-icons <dir>` | Battery style PNGs |
 | `--window-diagnose` | Accessibility + event tap creatable? |
 | `--stat-diagnose` | CPU clusters, load, memory pressure, GPU, top processes (no IPs) |
+| `--render-clipboard-hud <png> [--theme <id>]` | The ⌥⌘V window with sample clips, second row selected |
+| `--session-usage-diagnose` | Per live Claude / Codex session: transcript found, files read, turns, token totals, model, estimated cost (counts only) |
 | `--ai-limits-diagnose` | Provider statuses only — **user must ask** |
 | `--show-popover` | Open panel at launch |
 | `--panel-memory-diagnose [seconds]` | Footprint / CPU over open-close cycles |

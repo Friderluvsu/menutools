@@ -88,6 +88,47 @@ enum PreviewRenderer {
         }
     }
 
+    /// `--render-clipboard-hud <png> [--theme <id>]`: the ⌥⌘V window with sample clips (the real
+    /// history is not read into the picture). The second row is selected, so its buttons show.
+    static func renderClipboardHUD(to outputURL: URL) -> Bool {
+        var pinned = ClipboardItem(text: "brew services restart postgresql@16", isPinned: true)
+        pinned.timestamp = Date(timeIntervalSinceNow: -3 * 3600)
+        var long = ClipboardItem(
+            text: "func reveal(_ session: ClaudeSession) {\n    var pid = session.pid\n    for _ in 0..<8 { }\n}")
+        long.timestamp = Date(timeIntervalSinceNow: -40)
+        var files = ClipboardItem(files: ["/Applications/Safari.app", "/Applications/Notes.app"])
+        files.timestamp = Date(timeIntervalSinceNow: -15 * 60)
+        var url = ClipboardItem(text: "https://github.com/Friderluvsu/menutools/releases/latest")
+        url.timestamp = Date(timeIntervalSinceNow: -50 * 60)
+        let manager = ClipboardManager(previewItems: [pinned, long, files, url])
+        manager.selectedIndex = 1
+
+        let size = ClipboardHUDView.size
+        let hostingView = NSHostingView(rootView: ThemeHost { ClipboardHUDView(clipboardManager: manager) })
+        hostingView.sizingOptions = []
+        hostingView.frame = NSRect(origin: .zero, size: size)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = hostingView
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.appearance = ThemeManager.shared.theme.appearance.flatMap(NSAppearance.init(named:))
+        window.layoutIfNeeded()
+        hostingView.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        hostingView.displayIfNeeded()
+        guard let bitmap = hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds) else { return false }
+        hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return false }
+        do {
+            try data.write(to: outputURL, options: .atomic)
+            return true
+        } catch {
+            fputs("HUD render failed: \(error.localizedDescription)\n", stderr)
+            return false
+        }
+    }
+
     /// `--render-status-lights <png>`: one row per style. Columns: quiet, mixed, all on, a light
     /// popping on (with halo), a light turning off, open spin / wave, then all on over a light menu bar.
     /// Count styles show counts instead (see `countColumns`).

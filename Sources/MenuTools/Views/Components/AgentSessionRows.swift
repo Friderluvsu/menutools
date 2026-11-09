@@ -168,6 +168,8 @@ struct AgentLiveRow: View {
     var revealHint: String = "Click to show this project"
     /// Claude: the session is still open but its last run finished. Shown as Done, blue while unchecked.
     var done: (fresh: Bool, when: String)? = nil
+    /// Tokens so far; the row shows its badge (cost, tokens or context fill) before the uptime.
+    var usage: SessionUsage? = nil
     let onReveal: () -> Void
 
     var body: some View {
@@ -180,6 +182,7 @@ struct AgentLiveRow: View {
                 dotColor: done.fresh ? SessionStatusTone.ended.color : Color.secondary,
                 project: project,
                 uptime: done.when,
+                badge: usage?.badge,
                 details: details,
                 fill: done.fresh ? SessionStatusTone.ended.rowFill : SessionStatusTone.idle.rowFill,
                 helpText: tooltip + "\nFinished " + done.when + "\n" + revealHint,
@@ -195,6 +198,7 @@ struct AgentLiveRow: View {
                 dotColor: tone.color,
                 project: project,
                 uptime: uptime,
+                badge: usage?.badge,
                 details: details,
                 fill: tone.rowFill,
                 helpText: tooltip + "\n" + revealHint,
@@ -228,6 +232,7 @@ struct AgentEndedRow: View {
     /// Same slot as a live row's uptime: "just now", "4m ago".
     var when: String? = nil
     var helpNote: String = "Chat ended. Click to show this project"
+    var usage: SessionUsage? = nil
     let onReveal: () -> Void
     let onDismiss: () -> Void
 
@@ -240,6 +245,7 @@ struct AgentEndedRow: View {
             dotColor: fresh ? SessionStatusTone.ended.color : Color.secondary,
             project: project,
             uptime: when,
+            badge: usage?.badge,
             details: details,
             fill: fresh ? SessionStatusTone.ended.rowFill : Color.secondary.opacity(0.14),
             helpText: helpNote,
@@ -260,6 +266,8 @@ private struct AgentSessionRow: View {
     let dotColor: Color
     let project: String
     let uptime: String?
+    /// "~$4.12", "18k tok" or "11% ctx", before the uptime.
+    var badge: String? = nil
     let details: [SessionDetailField]
     let fill: Color
     let helpText: String
@@ -322,13 +330,23 @@ private struct AgentSessionRow: View {
                     .lineLimit(1)
                     .fixedSize()
             }
-            if showsProject || uptime != nil {
+            if showsProject || uptime != nil || badge != nil {
                 HStack(spacing: 6) {
                     if showsProject {
                         projectChip
                             .layoutPriority(-1)
                     }
                     Spacer(minLength: 0)
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.primary.opacity(0.07), in: Capsule())
+                    }
                     if let uptime, !uptime.isEmpty {
                         Text(uptime)
                             .font(.system(size: 10.5, design: .monospaced))
@@ -467,23 +485,28 @@ private struct DrawerHeightKey: PreferenceKey {
 }
 
 enum SessionDetailFields {
-    static func claude(_ session: ClaudeSession) -> [SessionDetailField] {
-        collect([
-            field("Name", session.name),
-            field("Project", session.project),
-            field("Path", session.shortCwd, mono: true, middle: true),
-            field("Id", session.sessionId, mono: true, middle: true),
-            field("Pid", "\(session.pid)", mono: true),
-            field("Kind", titled(session.kind)),
-            field("Entry", entryLabel(session.entrypoint)),
-            field("Version", session.version ?? ""),
-        ])
+    static func claude(_ session: ClaudeSession, usage: SessionUsage? = nil) -> [SessionDetailField] {
+        collect(
+            [
+                field("Name", session.name),
+                field("Project", session.project),
+            ] + usageFields(usage) + [
+                field("Path", session.shortCwd, mono: true, middle: true),
+                field("Id", session.sessionId, mono: true, middle: true),
+                field("Pid", "\(session.pid)", mono: true),
+                field("Kind", titled(session.kind)),
+                field("Entry", entryLabel(session.entrypoint)),
+                field("Version", session.version ?? ""),
+            ])
     }
 
     static func cursor(_ session: CursorSession) -> [SessionDetailField] {
         var fields = [
             field("Name", session.name),
             field("Project", session.project),
+        ]
+        fields += usageFields(session.usage)
+        fields += [
             field("Path", session.shortCwd, mono: true, middle: true),
             field("Id", session.id, mono: true, middle: true),
             field("Mode", session.modeLabel),
@@ -494,6 +517,12 @@ enum SessionDetailFields {
             fields.append(field("Files", "\(session.filesChanged) \(noun)"))
         }
         return collect(fields)
+    }
+
+    /// Tokens, cost, model and context rows. Empty when the agent logs none.
+    private static func usageFields(_ usage: SessionUsage?) -> [SessionDetailField?] {
+        guard let usage else { return [] }
+        return usage.detailLines.map { field($0.label, $0.value) }
     }
 
     static func cursorEnded(_ item: CursorEndedSession) -> [SessionDetailField] {
@@ -508,26 +537,30 @@ enum SessionDetailFields {
     }
 
     static func codex(_ session: CodexSession) -> [SessionDetailField] {
-        collect([
-            field("Name", session.name),
-            field("Project", session.project),
-            field("Path", session.shortCwd, mono: true, middle: true),
-            field("Pid", "\(session.pid)", mono: true),
-            field("Kind", "CLI"),
-            field("Preview", session.subtitle),
-        ])
+        collect(
+            [
+                field("Name", session.name),
+                field("Project", session.project),
+            ] + usageFields(session.usage) + [
+                field("Path", session.shortCwd, mono: true, middle: true),
+                field("Pid", "\(session.pid)", mono: true),
+                field("Kind", "CLI"),
+                field("Preview", session.subtitle),
+            ])
     }
 
     static func codexEnded(_ item: CodexEndedSession) -> [SessionDetailField] {
-        collect([
-            field("Name", item.name),
-            field("Project", item.project),
-            field("Path", item.shortCwd, mono: true, middle: true),
-            field("Id", item.id, mono: true),
-            field("Kind", "CLI"),
-            field("Preview", item.subtitle),
-            field("When", item.endedAt.formatted(.relative(presentation: .named))),
-        ])
+        collect(
+            [
+                field("Name", item.name),
+                field("Project", item.project),
+            ] + usageFields(item.usage) + [
+                field("Path", item.shortCwd, mono: true, middle: true),
+                field("Id", item.id, mono: true),
+                field("Kind", "CLI"),
+                field("Preview", item.subtitle),
+                field("When", item.endedAt.formatted(.relative(presentation: .named))),
+            ])
     }
 
     static func antigravity(_ session: AntigravitySession) -> [SessionDetailField] {

@@ -102,17 +102,19 @@ final class CodexSessionsManager: ObservableObject {
             finished.append(
                 CodexEndedSession(
                     id: id, name: tracked.name, project: tracked.project, cwd: tracked.cwd,
-                    subtitle: tracked.subtitle, endedAt: Date(), seen: false
+                    subtitle: tracked.subtitle, endedAt: Date(), seen: false, usage: tracked.usage
                 ))
         }
         for session in loaded {
             let fact = CodexFact(
                 pid: session.pid, name: session.name, project: session.project, cwd: session.cwd,
-                subtitle: session.subtitle)
-            if tracking[session.id] != fact {
-                tracking[session.id] = fact
+                subtitle: session.subtitle, usage: session.usage)
+            // Tokens move on every tick of a run; they are kept in memory and reach the file with
+            // the next save that another change triggers, or when the process ends.
+            if tracking[session.id]?.sameChat(as: fact) != true {
                 changed = true
             }
+            tracking[session.id] = fact
         }
         if !finished.isEmpty {
             ended.append(contentsOf: finished)

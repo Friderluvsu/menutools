@@ -55,7 +55,8 @@ struct CursorSessionsCard: View {
                                 uptime: session.uptime(now: context.date),
                                 details: SessionDetailFields.cursor(session),
                                 tooltip: session.tooltip,
-                                revealHint: "Click to show this project in Cursor"
+                                revealHint: "Click to show this project in Cursor",
+                                usage: session.usage
                             ) {
                                 manager.reveal(session)
                             }

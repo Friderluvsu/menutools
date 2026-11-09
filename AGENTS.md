@@ -21,9 +21,10 @@ Sources/
 │   │   ├── CursorSessions/        # Live Cursor agent chats from composer headers in state.vscdb
 │   │   ├── CodexSessions/         # Live Codex CLI processes; cwd via proc_pidinfo
 │   │   ├── AntigravitySessions/   # Live Antigravity chats from conversation_summaries.db
+│   │   ├── AgentUsage/            # Tokens, cost and context per session: Claude transcripts, Codex rollouts, pricing
 │   │   ├── AntiSleep/             # Awake (IOPMAssertion) and Closed-lid (pmset disablesleep, battery guard)
 │   │   ├── Battery/               # IOKit.ps reader & appearance-aware BatteryIconRenderer
-│   │   ├── Clipboard/             # History store (JSON), ⌥⌘V hotkey, floating HUD
+│   │   ├── Clipboard/             # History store (JSON; text, image and file clips), themed ⌥⌘V HUD, ⇧⌥⌘V plain paste
 │   │   ├── FanControl/            # SMCDriver (IOKit AppleSMC) & SMCHelperManager
 │   │   ├── iMessage/              # CGEventTap shortcuts (↑/↓, ⌥⌫) while Messages is frontmost
 │   │   ├── Mouse/                 # Wheel smooth scroll + modifiers, button actions (own tap thread), pointer speed (HID), per-app rules
@@ -73,10 +74,12 @@ Run the bundle binary (`build/MenuTools.app/Contents/MacOS/MenuTools`), never a 
 
 - `--render-preview <png> [--settings] [--sessions] [--anti-sleep-picker] [--fan-picker] [--sample-tasks] [--open-session-detail <id>]`: renders the panel offscreen at its natural height, then exits. `--sample-tasks` adds sample converter tasks (layout check only). `--sessions` opens the Sessions page. `--open-session-detail` expands that row's details (`claude:83592`, `cursor:<id>`, `cursor-ended:<id>`, and the same shape for Codex and Antigravity). `--theme <id>` renders with that theme without saving it; `--egg-at <seconds>` draws one frame of the theme's easter egg. Append `-SettingsSection Look` to open a Settings page without writing the user's defaults.
 - `--render-battery-icons <dir>`: writes the battery icon styles as PNGs.
+- `--render-clipboard-hud <png> [--theme <id>]`: the ⌥⌘V window with sample clips (the saved history is not drawn), second row selected. Exits.
 - `--render-status-lights <png>`: one row per status-light style; columns are quiet, mixed, all on, popping on, turning off, open spin / wave, and all on over a light menu bar. Exits.
 - `--window-diagnose`: prints `accessibility_trusted` and whether the session event tap can be created. Exits.
 - `--anti-sleep-diagnose`: turns Awake and Closed-lid on and off for real and prints our assertion count and `SleepDisabled` after each step, then exits. It sets `pmset disablesleep 1` for a moment through the helper and restores it.
 - `--render-preview … --lid-picker`: opens the Closed-lid duration picker instead of the Awake one.
+- `--session-usage-diagnose`: prints, per live Claude session, whether its transcript was found, how many files were read, turns, token totals, model, estimated cost and the row badge, then the same for live Codex processes. Counts only, never transcript text. Exits.
 - `--stat-diagnose`: prints CPU cluster indexes, load, memory pressure, GPU utilization and the top processes. No network addresses. Exits.
 - `--ai-limits-diagnose`: prints per-provider status, windows and cache age, never tokens. It reads the Keychain secret in-process, so run it only when asked.
 - `--show-popover`: opens the panel at launch (manual testing).
@@ -179,6 +182,10 @@ Run the bundle binary (`build/MenuTools.app/Contents/MacOS/MenuTools`), never a 
 - The directory watcher and timer stay on after launch: 2 s (0.5 s) while a session file is present or the panel is open, 15 s (4.5 s) otherwise. A session that starts needing input posts a "Claude needs input" notification once per wait. The announced pids are stored in `Application Support/MenuTools/claude-session-watch.json`. A Claude process stays open after a task, so the finish is the transition instead: a session that was Running (or waiting on input mid-run) and then holds Idle for 3 s, after a run of at least 10 s, is marked **Done** (blue status, "4m ago" in the uptime slot), posts **Claude finished** (`name · project · ran 12m`) and turns the lower-left (blue) light on until the row is seen, with the same seen / fresh rules as other providers' Ended rows. Done clears when that session starts working again or its process exits. Run starts and Done marks are saved in `claude-session-watch.json`, so a relaunch mid-run still catches the finish. Claude has no separate Ended row.
 - Details: `docs/knowledge-base/claude-sessions.md`.
 
+## Session tokens and cost (`Features/AgentUsage/`)
+- Each session row shows a badge before the uptime and the drawer adds Tokens, In / out, Cache, Cost, Model and Context rows. Read from the agent's own files, never the network. **Claude**: `projects/<cwd as dashes>/<sessionId>.jsonl` plus `<sessionId>/subagents/*.jsonl`; every assistant line carries `message.usage` and `message.model`, repeated per content block with the same `message.id`, so each id counts once. Files are append-only: `ClaudeTranscriptUsage` keeps a byte offset per file and reads only the new bytes on the manager's background tick (never on the synchronous launch / panel-open read). Cost is an estimate at public API list prices (`ClaudePricing`, cache writes 1.25× / 2× input for the 5 m / 1 h TTL), badge `~$4.12`; an unpriced model adds a trailing `+`. Context is the last main request's prompt size. **Codex**: `threads.rollout_path` from `state_*.sqlite`, last `token_count` event in the rollout's final 256 KB (cumulative `total_token_usage`, `model_context_window`), re-read only when the file grew; badge `18k tok`; no price table, so no cost; the usage at exit is kept on the Ended row; token changes alone do not rewrite the watch file (`CodexFact.sameChat`). **Cursor**: `contextTokensUsed` / `contextTokenLimit` json_extract'd with the other generation fields; badge `11% ctx`. Antigravity logs nothing.
+- Details: `docs/knowledge-base/session-usage.md`.
+
 ## Cursor Sessions (`Features/CursorSessions/`)
 - Live Cursor agent chats only. Headers live in `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (`composerHeaders`). The row shows the chat name, status (Running, or Input needed / Plan), a project chip and uptime. Mode, the last-edit subtitle, path, file count and composer id sit in the details drawer. Click a row to raise the Cursor window whose title ends with that project (`file — project`).
 - A chat counts as running when `composerData` still has `chatGenerationUUID` (or `status` is `generating` / `generatingBubbleIds` non-empty), or when `unfinishedRunAt` is set and its checkpoint moved in the last 3 minutes. Clean tool waits (e.g. `sleep 30`) often never set `unfinishedRunAt`; the UUID is what lights green. **Input needed** (orange) when `hasBlockingPendingActions` / `hasPendingPlan` is set, or when an `ask_question` tool bubble is still `loading`/`pending` (AskQuestion often skips the header flag). Approval and plan prompts stay for 30 minutes. Subagents, archived chats and conversation message blobs are not read; `composerData` is only json_extract'd for generation fields on recent headers. A busy SQLite read keeps the previous live rows so the ring does not go blank until the panel opens. Nothing is listed when Cursor is not running. Hidden on the dashboard when there are no live or ended rows.
@@ -201,7 +208,7 @@ Run the bundle binary (`build/MenuTools.app/Contents/MacOS/MenuTools`), never a 
 - `ThemeHost` (inside `PopoverContentView`) is the only observer of `ThemeManager`. It injects `\.appTheme`, `fontDesign` and `tint`. Views read colours through `@Environment(\.appTheme)`; never read `ThemeManager.shared` in a dashboard view (it would not re-render). The stat page's `StatPalette` reads the manager directly because the page is rebuilt on every open.
 - A theme sets: backdrop (material and/or gradient), a static Canvas texture, card / control / tile fills, stroke, corner scale, glow, accent, font design, header title, forced appearance (`AppDelegate` sets `panel.appearance`) and the chart palette.
 - Easter egg: five quick clicks on the header icon play that theme's Canvas animation for about 5 s. The `TimelineView` exists only while it plays.
-- Status colours (session ring and summary border, warnings, AI limit bars) stay semantic and are not themed. The Shelf floating panel and Clipboard HUD keep the Classic look.
+- Status colours (session ring and summary border, warnings, AI limit bars) stay semantic and are not themed. The Shelf floating panel keeps the Classic look. The Clipboard HUD is themed: its root sits in its own `ThemeHost` and its panel appearance follows the theme like the main panel.
 - Details: `docs/knowledge-base/themes.md`.
 
 ## Performance Rules

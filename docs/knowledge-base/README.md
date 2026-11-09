@@ -9,6 +9,8 @@ Focused notes on how MenuTools works, written for maintainers and coding agents.
 | [cursor-sessions.md](cursor-sessions.md) | Live Cursor agent chats: composer headers, running and input-needed rules, fields the card shows. |
 | [codex-sessions.md](codex-sessions.md) | Live Codex CLI processes: pid table, cwd, optional `state_*.sqlite` titles, process-exit ended watch. |
 | [antigravity-sessions.md](antigravity-sessions.md) | Live Antigravity conversations: `conversation_summaries.db`, running / input-needed rules, ended watch. |
+| [session-usage.md](session-usage.md) | Tokens, estimated cost and context per session row: Claude transcripts (incremental read, price table), Codex rollout tail, Cursor context fill. |
+| [clipboard.md](clipboard.md) | Clipboard history: text, image and file clips, limits, transforms, plain paste hotkey, settings keys. |
 | [battery-icons.md](battery-icons.md) | Menu bar battery renderers: Golden Gate geometry, bar and ring styles, colours, knocked-out digits, dark and light handling. |
 | [panel-and-drag.md](panel-and-drag.md) | The panel's interaction state machine: outside press, file drags, spring-loading on the status icon, focus, size. |
 | [shelf.md](shelf.md) | Temporary drop shelf: drag detection, floating panel, drag-out, persistence, card. |

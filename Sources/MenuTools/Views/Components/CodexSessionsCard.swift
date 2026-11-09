@@ -26,7 +26,8 @@ struct CodexSessionsCard: View {
                                 project: item.project,
                                 details: SessionDetailFields.codexEnded(item),
                                 fresh: !item.seen || manager.freshEnded.contains(item.id),
-                                when: endedAgo(item.endedAt, now: context.date)
+                                when: endedAgo(item.endedAt, now: context.date),
+                                usage: item.usage
                             ) {
                                 manager.revealEnded(item)
                             } onDismiss: {
@@ -52,7 +53,8 @@ struct CodexSessionsCard: View {
                                 project: session.project,
                                 uptime: session.uptime(now: context.date),
                                 details: SessionDetailFields.codex(session),
-                                tooltip: session.tooltip
+                                tooltip: session.tooltip,
+                                usage: session.usage
                             ) {
                                 manager.reveal(session)
                             }

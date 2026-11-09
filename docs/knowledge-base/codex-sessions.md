@@ -36,7 +36,7 @@ The card header uses ChatGPT.app's icon (bundle `com.openai.codex`) when that ap
 
 ## Fields the card shows
 
-The row shows the chat name, a project chip and uptime. A chevron opens a details drawer (name, project, path, pid, CLI, thread preview). Only one drawer is open across the session cards. Opening it animates the height.
+The row shows the chat name, a project chip, a token badge (`18k tok`, from the thread's rollout log) and uptime. A chevron opens a details drawer (name, project, tokens, in / out, cache, model, context, path, pid, CLI, thread preview). Only one drawer is open across the session cards. Opening it animates the height. Token details: [session-usage.md](session-usage.md).
 
 | Source | Where |
 |---|---|

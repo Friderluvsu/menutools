@@ -30,12 +30,13 @@ struct ClaudeSessionsCard: View {
                                 isRunning: session.isWorking,
                                 project: session.project,
                                 uptime: session.uptime(now: context.date),
-                                details: SessionDetailFields.claude(session),
+                                details: SessionDetailFields.claude(session, usage: manager.usage[session.id]),
                                 tooltip: session.tooltip,
                                 revealHint: "Click to show its window",
                                 done: manager.finished[session.id].map {
                                     (manager.isFreshFinish(session.id), endedAgo($0.finishedAt, now: context.date))
-                                }
+                                },
+                                usage: manager.usage[session.id]
                             ) {
                                 manager.reveal(session)
                             }
