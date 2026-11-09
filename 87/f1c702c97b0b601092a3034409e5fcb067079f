@@ -1,0 +1,53 @@
+AGENTS.md
+  s_3cdac31b580767::t_31947a506b976c 75,85,227
+Sources/MenuTools/App/PreviewRenderer.swift
+  s_3cdac31b580767::t_bb71911f07d4be 48,65-66
+Sources/MenuTools/Features/NetworkBypass/NetworkBypassManager.swift
+  s_3cdac31b580767::t_71aa17d4f299ba 50-52,103,115-116,118,141
+Sources/MenuTools/Features/SystemMonitor/SystemMonitorManager.swift
+  s_3cdac31b580767::t_ce5aab84eab7c7 108-109
+Sources/MenuTools/Views/Components/MouseSettingsPage.swift
+  s_3cdac31b580767::t_7eeb49ca6fdd57 379
+Sources/MenuTools/Views/Components/StatDetailPage.swift
+  s_3cdac31b580767::t_5f19664bb76de8 655-657
+Sources/MenuTools/Views/PopoverContentView.swift
+  s_e225250414b609::t_83a97fa7b5cd4d 119-124,314,317-319
+Sources/MenuTools/Views/Tabs/SettingsTabView.swift
+  s_3cdac31b580767::t_1f7e22f762c856 115-126,133-134,137-148,163,167-169,171,175-187,191,646,692,699,705,724,733-734,737-748,751-758,833,961,965,969
+docs/AGENT_GUIDE.md
+  s_3cdac31b580767::t_c26b749eeb504e 216
+docs/knowledge-base/performance.md
+  s_3cdac31b580767::t_02f9af93f6c86a 27-28,40
+docs/knowledge-base/system-stats.md
+  s_3cdac31b580767::t_9443858b4ca6a9 15,21,33
+Sources/MenuTools/App/AppDelegate.swift
+  s_3cdac31b580767::t_1f52a4252e32db 303-311,315
+Sources/MenuTools/Views/Components/PopupPicker.swift
+  s_3cdac31b580767::t_7ce41d54a24e32 1-90
+Sources/MenuTools/Views/Components/SmallSwitchToggleStyle.swift
+  s_3cdac31b580767::t_63c2e2271143ec 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "87f1c702c97b0b601092a3034409e5fcb067079f",
+  "prompts": {},
+  "sessions": {
+    "s_3cdac31b580767": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "415973b5-6336-4010-bf94-df89a288fdb5",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    },
+    "s_e225250414b609": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6987f0b-17cb-4cac-9008-e59383b7f8ee",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    }
+  }
+}
