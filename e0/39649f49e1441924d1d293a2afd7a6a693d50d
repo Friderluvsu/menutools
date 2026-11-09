@@ -1,0 +1,77 @@
+AGENTS.md
+  s_ed9f39cdacc252::t_fbf19898327f9c 4,29,92,138,142,145-155,177,210,215,220
+Sources/MenuTools/App/AppDelegate.swift
+  s_ed9f39cdacc252::t_84c1c4ffd0d9cc 42-63,146-149,239-241,254-258,262-267,278-281,384-391,393,415,578,592-599,757,760-790,792,802
+Sources/MenuTools/App/AppState.swift
+  s_ed9f39cdacc252::t_6420ff5ae12232 150,163,207-208,214-216,247-248,309,320
+Sources/MenuTools/App/PreviewRenderer.swift
+  s_ed9f39cdacc252::t_9e6ff3d899aaf0 93,129-130,132-133
+Sources/MenuTools/Features/AntiSleep/AntiSleepManager.swift
+  s_ed9f39cdacc252::t_db009b11cc57d5 151-166,189-190,243
+Sources/MenuTools/Features/AntigravitySessions/AntigravitySessionsManager.swift
+  s_ed9f39cdacc252::t_f2e4610abdbaf5 158-159
+Sources/MenuTools/Features/ClaudeSessions/ClaudeSession.swift
+  s_ed9f39cdacc252::t_873a2da57b2c89 163-165,170,173-174,176-178,183-206,208-214,216-219,221-222,225-227,230-253,259
+Sources/MenuTools/Features/ClaudeSessions/ClaudeSessionsManager.swift
+  s_ed9f39cdacc252::t_bd7ad9eb6a7448 36-43,70-71,89,111,119-145,175-176,181-188,193,196,198,211-213,215-216,233,268-270,299
+Sources/MenuTools/Features/CodexSessions/CodexSession.swift
+  s_ed9f39cdacc252::t_ee2e8737efcbf0 92-94,97
+Sources/MenuTools/Features/CodexSessions/CodexSessionsManager.swift
+  s_ed9f39cdacc252::t_5b19460598ee95 73-74,129-130
+Sources/MenuTools/Features/CursorSessions/CursorSessionsManager.swift
+  s_ed9f39cdacc252::t_92a14c13fbde76 159-160
+Sources/MenuTools/Features/FanControl/SMCHelperManager.swift
+  s_ed9f39cdacc252::t_a387df502f46f0 151-152,156-158,161
+Sources/MenuTools/Features/MenuBarItems/MenuBarItems.swift
+  s_ed9f39cdacc252::t_21eeb709bba7b7 1-176
+Sources/MenuTools/Features/Mouse/MouseActionRunner.swift
+  s_ed9f39cdacc252::t_6b86feb7ed6de6 1-111
+Sources/MenuTools/Features/Mouse/MouseEventEngine.swift
+  s_ed9f39cdacc252::t_6ee2ec8e38abae 1-348
+Sources/MenuTools/Features/Mouse/MouseManager.swift
+  s_ed9f39cdacc252::t_ec218bd9d42319 1-246
+Sources/MenuTools/Features/Mouse/PointerController.swift
+  s_ed9f39cdacc252::t_398d24f8d91640 1-198
+Sources/MenuTools/Features/StatusLights/CountLights.swift
+  s_ed9f39cdacc252::t_1c78f74607e21d 1-245
+Sources/MenuTools/Features/StatusLights/SceneLights.swift
+  s_ed9f39cdacc252::t_6927199adfdc05 1-237
+Sources/MenuTools/Features/StatusLights/SessionPeek.swift
+  s_ed9f39cdacc252::t_efb97bd72f0547 1-186
+Sources/MenuTools/Features/StatusLights/StatusLightShapes.swift
+  s_ed9f39cdacc252::t_c630243257a44b 1-334
+Sources/MenuTools/Features/StatusLights/StatusLights.swift
+  s_ed9f39cdacc252::t_6f1888aa988627 14-33,37-60,78-83,87-117,147-170,182-187,219,228-233,245-248,359-360,406-411,457-466,473,492,495-496,503-539,541-876,881,885,899-901,909-928,931,939,942,965-967,969-992,1013-1015,1073-1076,1146-1153,1168,1172-1178,1209-1234,1238-1272,1277-1278,1285-1315,1317-1322,1335,1340-1343,1345,1348,1351,1354
+Sources/MenuTools/Features/SystemMonitor/SystemMonitorManager.swift
+  s_ed9f39cdacc252::t_2701ae2a714ba5 16-27,343-347
+Sources/MenuTools/Views/Components/DashboardLayout.swift
+  s_ed9f39cdacc252::t_ebaba2ae186f2b 149-153,189-192,198,202
+Sources/MenuTools/Views/Components/MouseSettingsPage.swift
+  s_ed9f39cdacc252::t_de315d227d38db 1-475
+Sources/MenuTools/Views/PopoverContentView.swift
+  s_ed9f39cdacc252::t_e9bd9c7751c5c5 308-313,348-351,403-404,407-408,420,455-457
+Sources/MenuTools/Views/Tabs/SettingsTabView.swift
+  s_ed9f39cdacc252::t_98330e19418a2f 9,14-99,119-120,122,157,204-205,343-347,541,668-677,693-713,733-736,741-784,816,835,880
+docs/knowledge-base/README.md
+  s_ed9f39cdacc252::t_ef7d6df33efeb6 16
+Sources/MenuTools/Features/Mouse/MouseSettings.swift
+  s_ed9f39cdacc252::t_dddfc93989d86d 1-115
+docs/knowledge-base/mouse.md
+  s_ed9f39cdacc252::t_bcd519ea7eb6e7 1-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "e039649f49e1441924d1d293a2afd7a6a693d50d",
+  "prompts": {},
+  "sessions": {
+    "s_ed9f39cdacc252": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e5c4215-f2cc-49eb-acc4-b780e86f9223",
+        "model": "unknown"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    }
+  }
+}
