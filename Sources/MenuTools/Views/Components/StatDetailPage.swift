@@ -648,12 +648,13 @@ private struct ProcessList: View {
                             fraction: peak > 0 ? row.3 / peak : 0,
                             tint: tint
                         )
-                        .transition(.opacity.combined(with: .offset(y: 6)))
                     }
                 }
                 .padding(.vertical, 2)
                 .background(theme.tileFill, in: RoundedRectangle(cornerRadius: theme.radius(8), style: .continuous))
-                .animation(.smooth(duration: 0.4, extraBounce: 0), value: order)
+                // Not animated on purpose: CPU ranks change on every 2 s sample, and sliding eight
+                // rows (with transitions) for 0.4 s cost about 9% of a core while the page was open.
+                .animation(nil, value: order)
             }
         }
     }

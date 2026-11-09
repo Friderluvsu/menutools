@@ -112,28 +112,40 @@ struct SettingsTabView: View {
     @AppStorage("SettingsSection") private var section: SettingsSection = .general
     @State private var isAddingCustomException = false
     @State private var customBundleId = ""
-    @State private var sectionHeights: [SettingsSection: CGFloat] = [:]
+    @State private var sectionHeights: [SettingsSection: CGFloat] = SettingsTabView.knownHeights
+    /// Pages whose view graph exists. Only the selected page is built with Settings; the rest
+    /// follow one at a time once the fade is over, so the gear click waits for one page, not six.
+    @State private var mounted: Set<SettingsSection> = []
+    @State private var prewarm: Task<Void, Never>?
+
+    /// Measured page heights from earlier opens. With them the well is at its final height from
+    /// the first frame, so the lazy pages mounting later do not resize the panel.
+    @MainActor private static var knownHeights: [SettingsSection: CGFloat] = [:]
+
+    private static let prewarmDelay: Duration = .milliseconds(350)
+    private static let prewarmGap: Duration = .milliseconds(40)
 
     var body: some View {
         VStack(spacing: MacToolsTheme.sectionSpacing) {
             SettingsTabBar(selection: $section)
                 .padding(.bottom, 2)
 
-            // All pages are built with Settings. A tab click only changes which
-            // one is visible, and the well stays at the tallest page so the panel
-            // window is not resized.
+            // A tab click only changes which page is visible, and the well stays at the
+            // tallest page so the panel window is not resized.
             ZStack(alignment: .top) {
                 ForEach(SettingsSection.allCases) { page in
-                    SettingsSectionPage(
-                        page: page,
-                        appState: appState,
-                        isAddingCustomException: $isAddingCustomException,
-                        customBundleId: $customBundleId
-                    )
-                    .opacity(page == section ? 1 : 0)
-                    .allowsHitTesting(page == section)
-                    .accessibilityHidden(page != section)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    if mounted.contains(page) || page == section {
+                        SettingsSectionPage(
+                            page: page,
+                            appState: appState,
+                            isAddingCustomException: $isAddingCustomException,
+                            customBundleId: $customBundleId
+                        )
+                        .opacity(page == section ? 1 : 0)
+                        .allowsHitTesting(page == section)
+                        .accessibilityHidden(page != section)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .top)
@@ -148,17 +160,35 @@ struct SettingsTabView: View {
             withTransaction(transaction) {
                 for (page, height) in heights where height > 1 {
                     sectionHeights[page] = height
+                    Self.knownHeights[page] = height
                 }
             }
         }
+        .onChange(of: section) { _, page in
+            mounted.insert(page)
+        }
         .onAppear {
+            mounted.insert(section)
             appState.iMessage.refreshPermissions()
             appState.windowManager.refreshPermissions()
             appState.mouse.refreshPermissions()
+            prewarm?.cancel()
+            prewarm = Task { @MainActor in
+                try? await Task.sleep(for: Self.prewarmDelay)
+                for page in SettingsSection.allCases where !mounted.contains(page) {
+                    guard !Task.isCancelled else { return }
+                    mounted.insert(page)
+                    try? await Task.sleep(for: Self.prewarmGap)
+                }
+            }
+        }
+        .onDisappear {
+            prewarm?.cancel()
+            prewarm = nil
         }
     }
 
-    /// Tallest measured page. Tab switches must not change this, or the window relayouts.
+    /// Tallest known page. Tab switches must not change this, or the window relayouts.
     private var lockedContentHeight: CGFloat? {
         sectionHeights.values.filter { $0 > 1 }.max()
     }
@@ -613,7 +643,7 @@ private struct SettingsSectionPage: View {
     private func toggle(get: @escaping () -> Bool, set: @escaping (Bool) -> Void) -> some View {
         Toggle("", isOn: Binding(get: get, set: set))
             .labelsHidden()
-            .toggleStyle(.switch)
+            .toggleStyle(.smallSwitch)
             .controlSize(.small)
     }
 }
@@ -659,36 +689,20 @@ private struct StatusLightsRows: View {
                 }
                 Toggle("", isOn: $settings.enabled)
                     .labelsHidden()
-                    .toggleStyle(.switch)
+                    .toggleStyle(.smallSwitch)
                     .controlSize(.small)
                     .help("Colour lights for sessions. Off shows a static icon.")
             }
         }
         if settings.enabled {
             SettingsRow(title: "Style", isSecondary: true) {
-                Picker("", selection: $settings.style) {
-                    ForEach(StatusLightStyle.Group.allCases, id: \.self) { group in
-                        Section(group.rawValue) {
-                            ForEach(StatusLightStyle.allCases.filter { $0.group == group }) { style in
-                                Label {
-                                    Text(style.rawValue)
-                                } icon: {
-                                    Image(nsImage: preview(style))
-                                }
-                                .tag(style)
-                            }
-                        }
-                    }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(width: 128)
+                PopupPicker(items: styleItems, selection: $settings.style, width: 128)
             }
             .padding(.leading, 12)
             SettingsRow(title: "Animate", isSecondary: true) {
                 Toggle("", isOn: $settings.animations)
                     .labelsHidden()
-                    .toggleStyle(.switch)
+                    .toggleStyle(.smallSwitch)
                     .controlSize(.small)
             }
             .padding(.leading, 12)
@@ -707,7 +721,7 @@ private struct StatusLightsRows: View {
                 SettingsRow(title: "Idle life", isSecondary: true) {
                     Toggle("", isOn: $settings.idleLife)
                         .labelsHidden()
-                        .toggleStyle(.switch)
+                        .toggleStyle(.smallSwitch)
                         .controlSize(.small)
                         .help("A small gesture now and then; a reminder pop when input waits over 2 min")
                 }
@@ -716,20 +730,32 @@ private struct StatusLightsRows: View {
         }
         Divider().opacity(0.35)
         SettingsRow(title: settings.enabled ? "Panel icon" : "Menu bar icon") {
-            Picker(
-                "",
+            PopupPicker(
+                items: Self.iconItems,
                 selection: Binding(
                     get: { appState.menuBarIconStyle },
-                    set: { appState.menuBarIconStyle = $0 })
-            ) {
-                ForEach(MenuBarIconStyle.allCases) { style in
-                    Label(style.rawValue, systemImage: style.symbolName).tag(style)
-                }
-            }
-            .labelsHidden()
-            .controlSize(.small)
-            .frame(width: 190)
+                    set: { appState.menuBarIconStyle = $0 }),
+                width: 190)
         }
+    }
+
+    /// Grouped Lights / Counts / Professional, each with a two-lights-on preview.
+    private var styleItems: [PopupItem<StatusLightStyle>] {
+        var items: [PopupItem<StatusLightStyle>] = []
+        for group in StatusLightStyle.Group.allCases {
+            items.append(.header(group.rawValue))
+            for style in StatusLightStyle.allCases where style.group == group {
+                items.append(PopupItem(title: style.rawValue, image: preview(style), value: style))
+            }
+        }
+        return items
+    }
+
+    private static let iconItems: [PopupItem<MenuBarIconStyle>] = MenuBarIconStyle.allCases.map { style in
+        PopupItem(
+            title: style.rawValue,
+            image: NSImage(systemSymbolName: style.symbolName, accessibilityDescription: nil),
+            value: style)
     }
 
     private static let busyHelp = "Busy timer: a line under the icon fills over an hour of work"
@@ -804,7 +830,7 @@ private struct AILimitsSettingsCard: View {
                             set: { manager.setEnabled(provider, $0) })
                     )
                     .labelsHidden()
-                    .toggleStyle(.switch)
+                    .toggleStyle(.smallSwitch)
                     .controlSize(.small)
                 }
             }
@@ -932,15 +958,15 @@ private struct ClipboardSettingsCard: View {
         SettingsCard(title: "Clipboard", icon: "doc.on.clipboard", color: .secondary) {
             SettingsRow(title: "Images") {
                 Toggle("", isOn: $clipboard.captureImages)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .labelsHidden().toggleStyle(.smallSwitch).controlSize(.small)
             }
             SettingsRow(title: "Files") {
                 Toggle("", isOn: $clipboard.captureFiles)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .labelsHidden().toggleStyle(.smallSwitch).controlSize(.small)
             }
             SettingsRow(title: "Plain paste ⇧⌥⌘V") {
                 Toggle("", isOn: $clipboard.plainPasteHotkey)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .labelsHidden().toggleStyle(.smallSwitch).controlSize(.small)
             }
         }
     }

@@ -213,7 +213,7 @@ Run: `build/MenuTools.app/Contents/MacOS/MenuTools <flag>`
 | `--render-clipboard-hud <png> [--theme <id>]` | The ⌥⌘V window with sample clips, second row selected |
 | `--session-usage-diagnose` | Per live Claude / Codex session: transcript found, files read, turns, token totals, model, estimated cost (counts only) |
 | `--ai-limits-diagnose` | Provider statuses only — **user must ask** |
-| `--show-popover` | Open panel at launch |
+| `--show-popover [--stat cpu]` | Open panel at launch, optionally on a stat detail page (for CPU measurements) |
 | `--panel-memory-diagnose [seconds]` | Footprint / CPU over open-close cycles |
 
 ---

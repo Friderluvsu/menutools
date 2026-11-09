@@ -45,6 +45,7 @@ enum PreviewRenderer {
             openSessionDetail: openSessionDetail,
             onHeightChange: { reported.value = $0 }
         )
+        let buildStart = Date()
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.sizingOptions = []
         var size = NSSize(width: MacToolsTheme.popoverWidth, height: 1200)
@@ -61,6 +62,8 @@ enum PreviewRenderer {
         window.appearance = ThemeManager.shared.theme.appearance.flatMap(NSAppearance.init(named:))
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
+        // First build and layout of the view graph: what a click that mounts this page waits for.
+        print("Preview build: \(Int(Date().timeIntervalSince(buildStart) * 1000)) ms")
         // Preference callbacks may land on the next run loop turn.
         RunLoop.current.run(until: Date().addingTimeInterval(0.15))
 

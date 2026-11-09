@@ -376,7 +376,7 @@ private struct MouseSwitch: View {
     var body: some View {
         Toggle("", isOn: $isOn)
             .labelsHidden()
-            .toggleStyle(.switch)
+            .toggleStyle(.smallSwitch)
             .controlSize(.small)
     }
 }

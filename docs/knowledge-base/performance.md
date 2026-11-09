@@ -24,7 +24,8 @@ Verified against the source at the time of writing.
 | CodexSessionsManager | `Timer` on `.common`, walking live `codex` pids | 2.0 s (0.5 s) while a Codex process is live, a pid is tracked, or the panel is open; 15 s (4.5 s) otherwise | from launch. Process exit is the end |
 | AntigravitySessionsManager | `Timer` on `.common`, reading `conversation_summaries.db` | 2.0 s (0.5 s) while Antigravity/`agy` is running or the panel is open; 15 s (4.5 s) otherwise | from launch. Read-only. A watched conversation notifies when it goes idle |
 | SystemMonitorManager | `Timer.publish` + one 0.7 s warm-up | 2.0 s (0.5 s) | from launch. Keeps the last 10 minutes for the stat graphs. Tile values publish only while the panel is open. The same tick reads disk capacity. Process CPU and footprint are walked only while the CPU or Memory detail page is open |
-| NetworkBypassManager | `Timer.publish` | 5.0 s (1.5 s) | panel open |
+| NetworkBypassManager | `Timer.publish` | 5.0 s (1.5 s) | panel open. `scutil --nc status` only when a VPN id is known; a missing id is searched (`scutil --nc list`) at most every 5 min |
+| SystemMonitorManager latency probe | `Timer.publish`, one `/sbin/ping` | 3 s (1 s) | only while the Network page is open |
 | FanControlManager | `Timer.publish` | 2.0 s (0.6 s) foreground; 5.0 s (1.5 s) background | foreground: panel open. Background: only in curve mode while the panel is closed |
 | ClipboardManager | `Timer.publish` on `NSPasteboard.changeCount` | 1.0 s (0.5 s) | always, from launch |
 | UniversalControlManager | directory watcher on `~/Library/Preferences/ByHost` and a wake observer, plus a timer | 120 s (36 s) with the watcher; 15 s (4.5 s) if the watcher cannot open | only while auto-enable is on |
@@ -36,6 +37,7 @@ Verified against the source at the time of writing.
 | WindowManager animation | `DispatchSourceTimer` on `animationQueue` | 16 ms, 0.22 s total | during a window resize |
 | ClipboardManager filter | Combine debounce | 120 ms | while the search text changes |
 | AppDelegate | KVO on `NSApp.effectiveAppearance`; `DispatchSourceSignal` for SIGTERM | event-driven | always |
+| Settings prewarm | one `asyncAfter` 0.6 s after the dashboard first appears, then a `Task` mounting one page per 40 ms after 350 ms | once per process | builds the Settings graph hidden; it stays mounted. Measured 2026-11-09 (release, `--render-preview` `Preview build`): Settings on the click cost 380–440 ms against 150–250 ms for the dashboard alone; the sample showed SwiftUI layout of the page graph, not one control. With the graph prebuilt the click only animates opacity |
 
 Notes:
 - Panel-scoped polling is started and stopped only by `AppState.onPopoverWillShow` and `onPopoverDidClose`. Do not start a new timer from a view's `onAppear`.

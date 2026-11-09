@@ -300,9 +300,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // NSPanel defaults to true: the panel would vanish on the first click into another app,
         // before the outside-press logic can tell a file drag from a plain click.
         panel.hidesOnDeactivate = false
+        // `--show-popover --stat cpu` opens that detail page live (to measure a page's CPU use).
+        var launchStat: StatTopic?
+        if CommandLine.arguments.contains("--show-popover"),
+            let flag = CommandLine.arguments.firstIndex(of: "--stat"),
+            CommandLine.arguments.indices.contains(flag + 1)
+        {
+            launchStat = StatTopic(rawValue: CommandLine.arguments[flag + 1])
+            if let launchStat { appState.systemMonitor.setStatFocus(launchStat) }
+        }
         let hostingView = PanelHostingView(
             rootView: PopoverContentView(
                 appState: self.appState,
+                showStat: launchStat,
                 onHeightChange: { [weak self] height in self?.panelContentHeightChanged(height) }
             )
         )

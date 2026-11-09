@@ -90,7 +90,6 @@ final class SystemMonitorManager: ObservableObject {
         if cancellable == nil { startHistorySampling() } else { updateStats() }
         fetchPublicIPIfStale()
         updateLocalIP()
-        startLatencyProbe()
     }
 
     func stopMonitoring() {
@@ -106,6 +105,8 @@ final class SystemMonitorManager: ObservableObject {
     func setStatFocus(_ topic: StatTopic?) {
         let wantsProcesses = topic == .cpu || topic == .memory
         let wantsGPU = topic == .gpu
+        // The ping (a /sbin/ping process every 3 s) is only shown on the Network page.
+        if topic == .network { startLatencyProbe() } else { stopLatencyProbe() }
         processFollowUp?.cancel()
         processFollowUp = nil
         if wantsProcesses != samplingProcesses {

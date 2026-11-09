@@ -116,6 +116,12 @@ struct PopoverContentView: View {
             if showSettings {
                 settingsMounted = true
                 settingsOpacity = 1
+            } else if !settingsMounted {
+                // Build Settings hidden once the dashboard is on screen, so the gear click only
+                // fades. Its view graph took 250–400 ms to build on the click before.
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.settingsPrewarmDelay) {
+                    settingsMounted = true
+                }
             }
             noteSessionsPageVisible()
         }
@@ -305,13 +311,11 @@ struct PopoverContentView: View {
                 settingsOpacity = show ? 1 : 0
             }
         }
-        // Closed Settings is dropped after the fade; its measured height stays in `settingsHeight`.
-        guard !show else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            guard token == settingsFadeToken, !showSettings else { return }
-            settingsMounted = false
-        }
+        // Closed Settings stays mounted (hidden, no hit testing), so the next open is a fade only.
     }
+
+    /// Settings is prewarmed this long after the dashboard first appears.
+    private static let settingsPrewarmDelay: TimeInterval = 0.6
 
     /// The Sessions page is showing, so its ended rows count as seen. The dashboard summary does not.
     private func noteSessionsPageVisible() {
