@@ -93,6 +93,15 @@ final class NetworkBypassManager: ObservableObject {
         pollCancellable = nil
     }
 
+    /// Re-checks VPN and SpoofDPI and returns once the result is published, at most `timeout` later.
+    func refreshStatusNow(timeout: TimeInterval = 4) async {
+        refreshStatus()
+        let deadline = Date().addingTimeInterval(timeout)
+        while isRefreshing, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
     func refreshStatus() {
         guard !isVPNTransitioning && !isSpoofTransitioning && !isRefreshing else { return }
         isRefreshing = true

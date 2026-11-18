@@ -114,8 +114,8 @@ UI layout check: `make preview`, then **Read** `build/preview-dashboard.png`, `b
 ### Lifecycle
 
 1. `main.swift` (MainActor) boots `NSApplication` + `AppDelegate`.
-2. Status item is created at launch; the **panel and SwiftUI graph are built on first open** (idle footprint ~11 MB).
-3. `AppState` owns feature managers. `onPopoverWillShow` / `onPopoverDidClose` start and stop panel-scoped polling.
+2. Status item is created at launch; the **panel and SwiftUI graph are built hidden 4 s later** (idle footprint about 33 MB), so the first click opens as fast as the rest.
+3. `AppState` owns feature managers. `onPopoverWillShow` (before the first layout, cheap) and `onPopoverDidShow` (after the first frame: the scans) start panel-scoped polling; `onPopoverDidClose` stops it.
 4. SIGTERM is routed to `NSApp.terminate` so `applicationWillTerminate` can restore `pmset disablesleep`. Power assertions die with the process.
 
 ### Panel (critical AppKit)
@@ -162,7 +162,7 @@ Read-only usage for Claude Code, Codex, Antigravity, Cursor. Refresh on panel op
 
 ### Sessions (four managers)
 
-All stay watching after launch: **2 s** (tolerance 0.5 s) when relevant app is live or panel open; **15 s** (4.5 s) otherwise. Menu bar can show a three-segment **session ring** (input / running / unseen ended). The dashboard Sessions summary border splits across orange, green, and blue by the waiting, running, and unchecked-ended counts, with one traveling light per such session. Already-checked ended rows stay off that border. An ended row shows when it finished in the uptime slot (`just now`, `4m ago`, `2h ago`).
+All stay watching after launch: **2 s** (tolerance 0.5 s) when relevant app is live or panel open; **15 s** (4.5 s) otherwise. Menu bar can show a three-segment **session ring** (input / running / unchecked ended). Opening the panel checks nothing; a finished row is checked only by clicking it, its ✓ button, **Mark all checked**, or its notification (Claude also by Terax `paneFocused`). The dashboard Sessions summary border splits across orange, green, and blue by the waiting, running, and unchecked-ended counts, with one traveling light per such session. Already-checked ended rows stay off that border. An ended row shows when it finished in the uptime slot (`just now`, `4m ago`, `2h ago`).
 
 | Provider | Live source | Ended rows? | Input-needed? |
 |---|---|---|---|
@@ -213,6 +213,9 @@ Run: `build/MenuTools.app/Contents/MacOS/MenuTools <flag>`
 | `--render-clipboard-hud <png> [--theme <id>]` | The ⌥⌘V window with sample clips, second row selected |
 | `--session-usage-diagnose` | Per live Claude / Codex session: transcript found, files read, turns, token totals, model, estimated cost (counts only) |
 | `--ai-limits-diagnose` | Provider statuses only — **user must ask** |
+| `--cursor-cli-diagnose` | Live Cursor CLI processes, their chat ids, blob counts and CPU share over 6 s |
+| `--antigravity-diagnose` | Live Antigravity conversations, facts, and running statuses across IDE and agy CLI databases |
+| `--terax-link-diagnose` | Terax link responses and power refusals on a temporary socket |
 | `--show-popover [--stat cpu]` | Open panel at launch, optionally on a stat detail page (for CPU measurements) |
 | `--panel-memory-diagnose [seconds]` | Footprint / CPU over open-close cycles |
 

@@ -108,23 +108,15 @@ struct DashboardSessionsSection: View {
 
     private var tally: SessionStatusTally {
         SessionStatusTally.claude(claude.sessions, finished: claude.finished)
-            + .cursor(cursor.sessions, ended: cursor.ended.count)
-            + .codex(live: codex.sessions.count, ended: codex.ended.count)
-            + .antigravity(antigravity.sessions, ended: antigravity.ended.count)
+            + .cursor(cursor.sessions, ended: cursor.ended)
+            + .codex(live: codex.sessions.count, ended: codex.ended)
+            + .antigravity(antigravity.sessions, ended: antigravity.ended)
     }
 
-    /// One light per waiting or running session, and one per ended row still highlighted blue.
-    /// Checked ended rows stay in the tally and off the border.
+    /// One light per waiting or running session, and one per unchecked finish. Idle and checked
+    /// rows stay off the border.
     private var borderMix: SessionBorderMix {
-        SessionBorderMix(input: tally.input, running: tally.running, ended: uncheckedEnded)
-    }
-
-    /// Same rows the list paints blue: not yet seen, or still fresh from this visit.
-    private var uncheckedEnded: Int {
-        claude.sessions.filter { claude.isFreshFinish($0.id) && !$0.isWorking && !$0.needsInput }.count
-            + cursor.ended.filter { !$0.seen || cursor.freshEnded.contains($0.id) }.count
-            + codex.ended.filter { !$0.seen || codex.freshEnded.contains($0.id) }.count
-            + antigravity.ended.filter { !$0.seen || antigravity.freshEnded.contains($0.id) }.count
+        SessionBorderMix(input: tally.input, running: tally.running, ended: tally.ended)
     }
 }
 

@@ -1,7 +1,7 @@
 import Foundation
 import SQLite3
 
-/// One live Cursor agent chat, taken from the composer header table.
+/// One live Cursor agent chat, from the app's composer header table or a running CLI.
 struct CursorSession: Identifiable, Equatable, Sendable {
     let id: String
     let name: String
@@ -19,6 +19,8 @@ struct CursorSession: Identifiable, Equatable, Sendable {
     let filesChanged: Int
     /// Context fill from `composerData` (`contextTokensUsed` / `contextTokenLimit`). Cursor logs no spend.
     var usage: SessionUsage? = nil
+    /// The terminal agent's process, for CLI chats. nil for chats in the Cursor app.
+    var pid: pid_t? = nil
 
     var needsInput: Bool { waitingFor != nil }
 
@@ -304,6 +306,16 @@ struct CursorEndedSession: Identifiable, Equatable, Codable, Sendable {
         subtitle: "Edited AppState.swift",
         endedAt: Date(timeIntervalSinceNow: -60),
         seen: false
+    )
+    /// Already checked: quiet, folded under the idle line.
+    static let checkedSample = CursorEndedSession(
+        id: "ended-checked-sample",
+        name: "Fix login copy",
+        project: "salesiq",
+        cwd: NSHomeDirectory() + "/projects/salesiq",
+        subtitle: "Edited Login.tsx",
+        endedAt: Date(timeIntervalSinceNow: -3 * 3600),
+        seen: true
     )
 }
 

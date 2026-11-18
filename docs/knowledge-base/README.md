@@ -17,6 +17,7 @@ Focused notes on how MenuTools works, written for maintainers and coding agents.
 | [window-controls.md](window-controls.md) | Green maximize and red quit: event tap, Accessibility requirement, fast path, animation design, quit timing. |
 | [mouse.md](mouse.md) | Mouse wheel smooth scroll and modifiers, button actions, pointer speed via HID properties, per-app rules, testing. |
 | [performance.md](performance.md) | Timer and watcher inventory, measurement method, baseline and measurement history, open items. |
+| [terax-link.md](terax-link.md) | Terax phone access: local socket, requests and refusals, status snapshot, Rest mode, diagnose flag. |
 | [system-stats.md](system-stats.md) | Clickable CPU, memory, temperature, network and battery details: what each page shows and where the numbers come from. |
 | [pixel-shimmer.md](pixel-shimmer.md) | SymVibe `.sf-face` city-lights pixel recipe (tried on running rows / Awake, then removed). |
 | [themes.md](themes.md) | Panel themes: catalogue, what each theme changes, environment plumbing, easter eggs, preview flags. |

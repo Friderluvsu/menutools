@@ -7,7 +7,10 @@ import SwiftUI
 @MainActor
 final class AILimitsManager: ObservableObject {
     @Published private(set) var usage: [AIProvider: AIProviderUsage] = [:]
-    @Published private(set) var isRefreshing = false
+    /// Providers with a fetch in flight. Each one finishes on its own, so a slow CLI (Cursor up
+    /// to 25 s, agy up to 90 s) never holds the refresh button for the others.
+    @Published private(set) var refreshing: Set<AIProvider> = []
+    var isRefreshing: Bool { !refreshing.isEmpty }
     @Published private(set) var lastRefresh: Date?
     @Published private(set) var enabledProviders: Set<AIProvider>
 
@@ -97,12 +100,13 @@ final class AILimitsManager: ObservableObject {
     }
 
     /// `force` = user pressed refresh: skips the staleness check and soft back-off, never a 429 block.
+    /// A press within `minimumGap` of the last attempt is queued until the gap ends, not dropped.
     func refresh(force: Bool) async {
-        guard !previewMode, !isRefreshing else { return }
+        guard !previewMode else { return }
         let now = Date.now
 
-        var due: [AIProvider] = []
-        for provider in visibleProviders {
+        var due: [(provider: AIProvider, delay: TimeInterval)] = []
+        for provider in visibleProviders where !refreshing.contains(provider) {
             if let until = blockedUntil[provider], until > now {
                 if usage[provider] == nil {
                     usage[provider] = .failed(
@@ -110,26 +114,34 @@ final class AILimitsManager: ObservableObject {
                 }
                 continue
             }
-            if let last = lastAttempt[provider],
-                now.timeIntervalSince(last) < (force ? Self.minimumGap : Self.staleInterval)
-            {
-                continue
+            var delay: TimeInterval = 0
+            if let last = lastAttempt[provider] {
+                let elapsed = now.timeIntervalSince(last)
+                if force {
+                    delay = max(0, Self.minimumGap - elapsed)
+                } else if elapsed < Self.staleInterval {
+                    continue
+                }
             }
             if !force, let retry = retryNotBefore[provider], retry > now { continue }
-            due.append(provider)
+            due.append((provider, delay))
         }
         guard !due.isEmpty else { return }
 
-        isRefreshing = true
-        defer { isRefreshing = false }
-
-        for provider in due { lastAttempt[provider] = now }
+        for item in due {
+            refreshing.insert(item.provider)
+            lastAttempt[item.provider] = now.addingTimeInterval(item.delay)
+        }
         await withTaskGroup(of: AIProviderUsage.self) { group in
-            for provider in due {
-                group.addTask { await Self.fetch(provider) }
+            for item in due {
+                group.addTask {
+                    if item.delay > 0 { try? await Task.sleep(nanoseconds: UInt64(item.delay * 1_000_000_000)) }
+                    return await Self.fetch(item.provider)
+                }
             }
             for await result in group {
                 apply(result)
+                refreshing.remove(result.provider)
             }
         }
     }

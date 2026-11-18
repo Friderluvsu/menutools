@@ -26,9 +26,9 @@ The process exiting is the end. MenuTools stores the pids it has already seen in
 
 - posts a notification titled **Codex finished**, body `name · project`
 - adds an **Ended** row on the Codex card (blue, so it does not look like a chat that needs input)
-- turns the lower-left segment of the menu bar ring blue until that row is on screen
+- turns the lower-left segment of the menu bar ring blue until that row is checked
 
-A live process turns the lower-right segment green. Codex has no input-needed state. Opening the panel clears the blue segment when the row is in the dashboard list. More than three rows collapse to a Sessions summary, and that summary does not count: the segment and the blue row stay until the Sessions page is opened. Ended rows you have already seen turn grey, and the word Ended stays blue. A finish you have not seen keeps the blue row, and stays at the top, until you close the panel after seeing it. The uptime slot shows when it finished: `just now`, `4m ago`, `2h ago`, `1d ago`. Ended rows stay until the x on the row is pressed. Pids loaded from a previous launch that are already dead are dropped on start, so a relaunch does not fire stale alerts.
+A live process turns the lower-right segment green. Codex has no input-needed state. Opening the panel or the Sessions page checks nothing, and the Sessions summary does not check anything either. An unchecked finish keeps the blue row and the blue segment, and stays at the top, until it is checked. A row is checked by clicking it (which also raises the window), by its ✓ button, by the card header's **Mark all checked** button, or by clicking the **Codex finished** notification. A checked row turns grey, with a grey Ended label, and its ✕ removes it. In `codex-session-watch.json` the `seen` flag on an ended row means checked. The uptime slot shows when it finished: `just now`, `4m ago`, `2h ago`, `1d ago`. Unchecked Ended rows stay until checked and removed. Pids loaded from a previous launch that are already dead are dropped on start, so a relaunch does not fire stale alerts.
 
 The watch starts at launch. While any Codex process is live, a pid is still tracked, or the panel is open, the read is every 2 s (tolerance 0.5 s). Otherwise it is every 15 s.
 
@@ -47,8 +47,8 @@ The row shows the chat name, a project chip, a token badge (`18k tok`, from the 
 | process pid | Drawer |
 | `threads.updated_at_ms` | Uptime when the thread row exists |
 
-A click on a live row walks the parent pid chain and activates the terminal (or other regular app) that owns the process. A click on an Ended row raises a ChatGPT or Codex window whose title matches the project, when that app is running. The chevron does not reveal the app.
+A click on a live row walks the parent pid chain and activates the terminal (or other regular app) that owns the process. A click on an Ended row raises a ChatGPT or Codex window whose title matches the project, when that app is running, and checks the row. The chevron does not reveal the app.
 
 ## When it runs
 
-`AppState` constructs the manager at launch. `onPopoverWillShow` only speeds the poll and marks ended rows seen. Published arrays are replaced only when they differ.
+`AppState` constructs the manager at launch. `onPopoverDidShow` (one turn after the panel is on screen) only speeds the poll. It checks nothing. Published arrays are replaced only when they differ.

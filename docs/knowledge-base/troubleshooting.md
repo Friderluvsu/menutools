@@ -101,7 +101,7 @@ Each entry gives the symptom, the cause in the code, and the fix. Source referen
 ## Performance
 
 ### Idle memory is higher than the baseline
-- Check whether the panel was opened in this session: its SwiftUI graph is built on first open. Then measure `vmmap --summary <pid>` physical footprint, not RSS. Compare with `performance.md`. Always-on work is limited to the items in its timer inventory.
+- The panel's SwiftUI graph is built hidden 4 s after launch, so the idle footprint is about 33 MB (`performance.md`). Measure `vmmap --summary <pid>` physical footprint, not RSS. Compare with `performance.md`. Always-on work is limited to the items in its timer inventory.
 
 ## Anti-sleep and battery
 

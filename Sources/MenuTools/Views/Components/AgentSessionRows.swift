@@ -27,9 +27,20 @@ enum SessionStatusTone {
         if isRunning { return .running }
         return .idle
     }
+
+    /// List order: needs you, working, unchecked finish, then the quiet rows.
+    var rank: Int {
+        switch self {
+        case .input: 0
+        case .running: 1
+        case .ended: 2
+        case .idle: 3
+        }
+    }
 }
 
-/// Counts shown beside an app icon, and on the collapsed Sessions row.
+/// Counts shown beside an app icon, and on the collapsed Sessions row. `ended` counts unchecked
+/// finishes only; a checked one is quiet and counts as idle.
 struct SessionStatusTally: Equatable {
     var running = 0
     var input = 0
@@ -43,8 +54,17 @@ struct SessionStatusTally: Equatable {
         if input > 0 { parts.append("\(input) need input") }
         if running > 0 { parts.append("\(running) running") }
         if idle > 0 { parts.append("\(idle) idle") }
-        if ended > 0 { parts.append("\(ended) ended") }
+        if ended > 0 { parts.append("\(ended) to check") }
         return parts.joined(separator: ", ")
+    }
+
+    func count(_ tone: SessionStatusTone) -> Int {
+        switch tone {
+        case .running: running
+        case .input: input
+        case .idle: idle
+        case .ended: ended
+        }
     }
 
     mutating func add(_ tone: SessionStatusTone) {
@@ -65,7 +85,8 @@ struct SessionStatusTally: Equatable {
         )
     }
 
-    /// A live session whose last run finished counts as ended (blue), like another app's Ended row.
+    /// A live session whose last run finished and is unchecked counts as ended (blue), like another
+    /// app's unchecked Ended row.
     static func claude(_ sessions: [ClaudeSession], finished: [String: ClaudeFinish] = [:]) -> SessionStatusTally {
         var tally = SessionStatusTally()
         for session in sessions {
@@ -78,20 +99,30 @@ struct SessionStatusTally: Equatable {
         return tally
     }
 
-    static func cursor(_ sessions: [CursorSession], ended: Int) -> SessionStatusTally {
-        var tally = SessionStatusTally(ended: ended)
+    /// Unchecked ended rows are blue; checked ones are quiet.
+    static func ended(unchecked: Int, checked: Int) -> SessionStatusTally {
+        SessionStatusTally(idle: checked, ended: unchecked)
+    }
+
+    static func cursor(_ sessions: [CursorSession], ended: [CursorEndedSession]) -> SessionStatusTally {
+        var tally = SessionStatusTally.ended(
+            unchecked: ended.filter { !$0.seen }.count, checked: ended.filter(\.seen).count)
         for session in sessions {
             tally.add(.live(needsInput: session.needsInput, isRunning: session.status == "running"))
         }
         return tally
     }
 
-    static func codex(live: Int, ended: Int) -> SessionStatusTally {
-        SessionStatusTally(running: live, ended: ended)
+    static func codex(live: Int, ended: [CodexEndedSession]) -> SessionStatusTally {
+        var tally = SessionStatusTally.ended(
+            unchecked: ended.filter { !$0.seen }.count, checked: ended.filter(\.seen).count)
+        tally.running += live
+        return tally
     }
 
-    static func antigravity(_ sessions: [AntigravitySession], ended: Int) -> SessionStatusTally {
-        var tally = SessionStatusTally(ended: ended)
+    static func antigravity(_ sessions: [AntigravitySession], ended: [AntigravityEndedSession]) -> SessionStatusTally {
+        var tally = SessionStatusTally.ended(
+            unchecked: ended.filter { !$0.seen }.count, checked: ended.filter(\.seen).count)
         for session in sessions {
             tally.add(.live(needsInput: session.needsInput, isRunning: session.status == "running"))
         }
@@ -100,24 +131,28 @@ struct SessionStatusTally: Equatable {
 }
 
 /// Colored dot and count. A zero bucket is omitted, so a quiet card shows one mark.
+/// With `onSelect`, each mark is a filter button: the card then lists only that state.
 struct SessionStatusMarks: View {
     let tally: SessionStatusTally
+    var selected: SessionStatusTone? = nil
+    var onSelect: ((SessionStatusTone) -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 7) {
-            mark(.input, tally.input, "need input")
-            mark(.running, tally.running, "running")
-            mark(.idle, tally.idle, "idle")
-            mark(.ended, tally.ended, "ended")
+        HStack(spacing: onSelect == nil ? 7 : 2) {
+            mark(.input, "need input")
+            mark(.running, "running")
+            mark(.ended, "to check")
+            mark(.idle, "idle")
         }
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: onSelect == nil ? .ignore : .contain)
         .accessibilityLabel(tally.spoken)
     }
 
     @ViewBuilder
-    private func mark(_ tone: SessionStatusTone, _ count: Int, _ word: String) -> some View {
+    private func mark(_ tone: SessionStatusTone, _ word: String) -> some View {
+        let count = tally.count(tone)
         if count > 0 {
-            HStack(spacing: 3) {
+            let label = HStack(spacing: 3) {
                 Circle()
                     .fill(tone.color)
                     .frame(width: 6, height: 6)
@@ -125,8 +160,144 @@ struct SessionStatusMarks: View {
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(tone.color)
             }
-            .help("\(count) \(word)")
+            if let onSelect {
+                let isOn = selected == tone
+                Button {
+                    onSelect(tone)
+                } label: {
+                    label
+                        .padding(.horizontal, 4)
+                        .frame(height: 16)
+                        .background(Capsule().fill(isOn ? tone.color.opacity(0.22) : Color.clear))
+                        .overlay(Capsule().strokeBorder(isOn ? tone.color.opacity(0.5) : Color.clear, lineWidth: 0.5))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .suppressesFocusRing()
+                .help(isOn ? "Show all" : "Only \(word) (\(count))")
+                .accessibilityLabel("\(count) \(word)")
+                .accessibilityAddTraits(isOn ? .isSelected : [])
+            } else {
+                label.help("\(count) \(word)")
+            }
         }
+    }
+}
+
+/// Per card: the state filter picked from its header marks, and whether its quiet rows are open.
+/// Shared by the dashboard and the Sessions page; kept while MenuTools runs.
+@MainActor
+final class SessionListState: ObservableObject {
+    @Published private(set) var filters: [SessionCardHeader.Kind: SessionStatusTone] = [:]
+    @Published private(set) var quietOpen: Set<SessionCardHeader.Kind> = []
+
+    /// The picked filter, or nil when nothing in the card has that state any more.
+    func filter(for kind: SessionCardHeader.Kind, tally: SessionStatusTally) -> SessionStatusTone? {
+        guard let tone = filters[kind], tally.count(tone) > 0 else { return nil }
+        return tone
+    }
+
+    /// The same mark again clears the filter.
+    func toggleFilter(_ tone: SessionStatusTone, for kind: SessionCardHeader.Kind, tally: SessionStatusTally) {
+        withAnimation(SessionDashboardLayout.detailAnimation) {
+            filters[kind] = filter(for: kind, tally: tally) == tone ? nil : tone
+        }
+    }
+
+    func toggleQuiet(_ kind: SessionCardHeader.Kind) {
+        withAnimation(SessionDashboardLayout.detailAnimation) {
+            if quietOpen.contains(kind) { quietOpen.remove(kind) } else { quietOpen.insert(kind) }
+        }
+    }
+}
+
+/// A card's rows: what needs you first (input, running, unchecked finish), then one line that folds
+/// the quiet rows (idle, checked). A header filter shows one state only, quiet rows included.
+struct SessionRowList<Item: Identifiable, Row: View>: View {
+    @EnvironmentObject private var state: SessionListState
+
+    let kind: SessionCardHeader.Kind
+    let items: [Item]
+    let tally: SessionStatusTally
+    let tone: (Item) -> SessionStatusTone
+    let project: (Item) -> String
+    @ViewBuilder let row: (Item) -> Row
+
+    var body: some View {
+        let ordered = items.enumerated()
+            .sorted { lhs, rhs in
+                let left = tone(lhs.element).rank
+                let right = tone(rhs.element).rank
+                return left == right ? lhs.offset < rhs.offset : left < right
+            }
+            .map(\.element)
+        if let filter = state.filter(for: kind, tally: tally) {
+            ForEach(ordered.filter { tone($0) == filter }) { item in
+                row(item)
+            }
+        } else {
+            let quiet = ordered.filter { tone($0) == .idle }
+            ForEach(ordered.filter { tone($0) != .idle }) { item in
+                row(item)
+            }
+            if !quiet.isEmpty {
+                let open = state.quietOpen.contains(kind)
+                SessionQuietToggle(count: quiet.count, projects: quiet.map(project), isOpen: open) {
+                    state.toggleQuiet(kind)
+                }
+                if open {
+                    ForEach(quiet) { item in
+                        row(item)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// "+5 idle · menutools, translator, …" with a chevron. Stays put while its rows open under it.
+private struct SessionQuietToggle: View {
+    let count: Int
+    let projects: [String]
+    let isOpen: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(isOpen ? "\(count) idle" : "+\(count) idle")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                if !names.isEmpty {
+                    Text("· " + names)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isOpen ? 180 : 0))
+                    .frame(width: 18)
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .suppressesFocusRing()
+        .hoverHighlight(cornerRadius: 6)
+        .help(isOpen ? "Hide idle sessions" : "Show idle sessions")
+        .accessibilityLabel(isOpen ? "Hide \(count) idle sessions" : "Show \(count) idle sessions")
+    }
+
+    /// Distinct projects in list order.
+    private var names: String {
+        var seen = Set<String>()
+        return projects.filter { !$0.isEmpty && $0 != "—" && seen.insert($0).inserted }.joined(separator: ", ")
     }
 }
 
@@ -166,10 +337,13 @@ struct AgentLiveRow: View {
     let details: [SessionDetailField]
     let tooltip: String
     var revealHint: String = "Click to show this project"
-    /// Claude: the session is still open but its last run finished. Shown as Done, blue while unchecked.
-    var done: (fresh: Bool, when: String)? = nil
+    /// Claude: the session is still open and its last run finished unchecked ("4m ago"). Shown as a
+    /// blue Done row until checked; a checked one is a plain Idle row.
+    var done: String? = nil
     /// Tokens so far; the row shows its badge (cost, tokens or context fill) before the uptime.
     var usage: SessionUsage? = nil
+    /// Marks the Done row checked without bringing its window forward.
+    var onCheck: (() -> Void)? = nil
     let onReveal: () -> Void
 
     var body: some View {
@@ -179,14 +353,15 @@ struct AgentLiveRow: View {
                 name: name,
                 statusTitle: "Done",
                 statusColor: SessionStatusTone.ended.color,
-                dotColor: done.fresh ? SessionStatusTone.ended.color : Color.secondary,
+                dotColor: SessionStatusTone.ended.color,
                 project: project,
-                uptime: done.when,
+                uptime: done,
                 badge: usage?.badge,
                 details: details,
-                fill: done.fresh ? SessionStatusTone.ended.rowFill : SessionStatusTone.idle.rowFill,
-                helpText: tooltip + "\nFinished " + done.when + "\n" + revealHint,
-                onReveal: onReveal
+                fill: SessionStatusTone.ended.rowFill,
+                helpText: tooltip + "\nFinished " + done + "\n" + revealHint,
+                onReveal: onReveal,
+                onCheck: onCheck
             )
         } else {
             let tone = SessionStatusTone.live(needsInput: needsInput, isRunning: isRunning)
@@ -208,11 +383,6 @@ struct AgentLiveRow: View {
     }
 }
 
-/// Fresh ended rows first. `sorted` is stable, so the rest keep their order.
-func endedRowsFreshFirst<Item>(_ items: [Item], isFresh: (Item) -> Bool) -> [Item] {
-    items.sorted { isFresh($0) && !isFresh($1) }
-}
-
 /// "just now", "4m ago", "2h ago", "1d ago". Shown where a live row shows uptime.
 func endedAgo(_ date: Date, now: Date) -> String {
     let whole = Int(max(0, now.timeIntervalSince(date)))
@@ -227,13 +397,14 @@ struct AgentEndedRow: View {
     let name: String
     let project: String
     let details: [SessionDetailField]
-    /// Unchecked finish. After the panel has been opened on it, the row goes grey and Ended stays blue.
-    var fresh: Bool = false
+    /// Not checked yet: blue, with a ✓. A checked row is grey, quiet, and can be dismissed.
+    var unchecked: Bool = false
     /// Same slot as a live row's uptime: "just now", "4m ago".
     var when: String? = nil
     var helpNote: String = "Chat ended. Click to show this project"
     var usage: SessionUsage? = nil
     let onReveal: () -> Void
+    let onCheck: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
@@ -241,16 +412,17 @@ struct AgentEndedRow: View {
             expansionID: expansionID,
             name: name,
             statusTitle: "Ended",
-            statusColor: SessionStatusTone.ended.color,
-            dotColor: fresh ? SessionStatusTone.ended.color : Color.secondary,
+            statusColor: unchecked ? SessionStatusTone.ended.color : Color.secondary,
+            dotColor: unchecked ? SessionStatusTone.ended.color : Color.secondary,
             project: project,
             uptime: when,
             badge: usage?.badge,
             details: details,
-            fill: fresh ? SessionStatusTone.ended.rowFill : Color.secondary.opacity(0.14),
+            fill: unchecked ? SessionStatusTone.ended.rowFill : SessionStatusTone.idle.rowFill,
             helpText: helpNote,
             onReveal: onReveal,
-            onDismiss: onDismiss
+            onCheck: unchecked ? onCheck : nil,
+            onDismiss: unchecked ? nil : onDismiss
         )
     }
 }
@@ -272,6 +444,7 @@ private struct AgentSessionRow: View {
     let fill: Color
     let helpText: String
     let onReveal: () -> Void
+    var onCheck: (() -> Void)? = nil
     var onDismiss: (() -> Void)?
 
     private var isOpen: Bool { selection.openID == expansionID }
@@ -287,6 +460,20 @@ private struct AgentSessionRow: View {
                 .suppressesFocusRing()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(helpText)
+
+                if let onCheck {
+                    Button(action: onCheck) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(SessionStatusTone.ended.color)
+                            .frame(width: 16, height: 16)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .suppressesFocusRing()
+                    .help("Mark checked")
+                    .accessibilityLabel("Mark checked")
+                }
 
                 detailButton
 

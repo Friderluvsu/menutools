@@ -116,6 +116,30 @@ if CommandLine.arguments.contains("--ai-limits-diagnose") {
     exit(0)
 }
 
+if CommandLine.arguments.contains("--cursor-cli-diagnose") {
+    // Live Cursor CLI processes, their chat ids, blob counts and CPU share over 6 s. No message text.
+    for line in MainActor.assumeIsolated({ CursorCLIScanner.diagnose() }) { print(line) }
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--terax-reveal-diagnose") {
+    // Which Terax owns a session pid, and that Terax's reply to `pane.reveal`. Switches its tab.
+    for line in TeraxReveal.diagnose(arguments: CommandLine.arguments) { print(line) }
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--terax-link-diagnose") {
+    // The Terax link on a temporary socket: replies and refusals only, no power change.
+    let passed = MainActor.assumeIsolated { TeraxLinkDiagnose.run() }
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.contains("--antigravity-diagnose") {
+    // Live Antigravity conversations, facts, and running statuses across IDE and agy CLI databases.
+    for line in MainActor.assumeIsolated({ AntigravitySessionFiles.diagnose() }) { print(line) }
+    exit(0)
+}
+
 // Prevent multiple running instances of MenuTools
 let currentPID = ProcessInfo.processInfo.processIdentifier
 let bundleID = Bundle.main.bundleIdentifier ?? "com.frider.MenuTools"

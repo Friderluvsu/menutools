@@ -16,13 +16,13 @@ Verified against the source at the time of writing.
 
 | Owner | Mechanism | Interval (tolerance) | Runs when |
 |---|---|---|---|
-| AILimitsManager | `Timer.scheduledTimer` | 300 s (30 s) | panel open (`onPopoverWillShow` / `onPopoverDidClose`) |
+| AILimitsManager | `Timer.scheduledTimer` | 300 s (30 s) | panel open (`onPopoverDidShow` / `onPopoverDidClose`) |
 | ClaudeSessionsManager | directory watcher on `~/.claude/sessions`, plus a `Timer` on `.common` | 2.0 s (0.5 s) while a session file is present or the panel is open; 15 s (4.5 s) otherwise | from launch. The watcher sees sessions start and exit; the timer sees status rewrites inside an existing file. A new wait posts "Claude needs input" once |
 | ClaudeTranscriptUsage | runs inside the Claude background tick above (never the synchronous read) | same 2 s / 15 s | per live session: a `stat` of the transcript, a read of only the bytes added since the last tick, and a listing of the `subagents` folder. The first pass reads the whole file (measured 2026-11-09, spot-checked: four live sessions, one with 36 subagent files, 1.5 s on the utility queue) |
 | CodexRolloutUsage | inside the Codex refresh | same 2 s / 15 s | one `stat` per live thread; the last 256 KB of the rollout are re-read only when the file grew |
-| CursorSessionsManager | `Timer` on `.common`, reading `composerHeaders` (+ cheap `composerData` json_extract for recent chats) | 2.0 s (0.5 s) while Cursor is running or the panel is open; 15 s (4.5 s) otherwise | from launch. Read-only. A watched run notifies when active-generation signals clear |
+| CursorSessionsManager | `Timer` on `.common`, reading `composerHeaders` (+ cheap `composerData` json_extract for recent chats) | 2.0 s (0.5 s) while Cursor or a Cursor CLI is running or the panel is open; 15 s (4.5 s) otherwise | from launch. Read-only. A watched run notifies when active-generation signals clear. CLI processes are searched every 6 s; a live one costs a CPU sample and an open-file listing per poll |
 | CodexSessionsManager | `Timer` on `.common`, walking live `codex` pids | 2.0 s (0.5 s) while a Codex process is live, a pid is tracked, or the panel is open; 15 s (4.5 s) otherwise | from launch. Process exit is the end |
-| AntigravitySessionsManager | `Timer` on `.common`, reading `conversation_summaries.db` | 2.0 s (0.5 s) while Antigravity/`agy` is running or the panel is open; 15 s (4.5 s) otherwise | from launch. Read-only. A watched conversation notifies when it goes idle |
+| AntigravitySessionsManager | `Timer` on `.common`, reading the IDE's and the CLI's `conversation_summaries.db` | 2.0 s (0.5 s) while Antigravity/`agy` is running or the panel is open; 15 s (4.5 s) otherwise | from launch. Read-only. A watched conversation notifies when it goes idle |
 | SystemMonitorManager | `Timer.publish` + one 0.7 s warm-up | 2.0 s (0.5 s) | from launch. Keeps the last 10 minutes for the stat graphs. Tile values publish only while the panel is open. The same tick reads disk capacity. Process CPU and footprint are walked only while the CPU or Memory detail page is open |
 | NetworkBypassManager | `Timer.publish` | 5.0 s (1.5 s) | panel open. `scutil --nc status` only when a VPN id is known; a missing id is searched (`scutil --nc list`) at most every 5 min |
 | SystemMonitorManager latency probe | `Timer.publish`, one `/sbin/ping` | 3 s (1 s) | only while the Network page is open |
@@ -40,7 +40,7 @@ Verified against the source at the time of writing.
 | Settings prewarm | one `asyncAfter` 0.6 s after the dashboard first appears, then a `Task` mounting one page per 40 ms after 350 ms | once per process | builds the Settings graph hidden; it stays mounted. Measured 2026-11-09 (release, `--render-preview` `Preview build`): Settings on the click cost 380–440 ms against 150–250 ms for the dashboard alone; the sample showed SwiftUI layout of the page graph, not one control. With the graph prebuilt the click only animates opacity |
 
 Notes:
-- Panel-scoped polling is started and stopped only by `AppState.onPopoverWillShow` and `onPopoverDidClose`. Do not start a new timer from a view's `onAppear`.
+- Panel-scoped polling is started only by `AppState.onPopoverWillShow` (before the first layout; keep it under 2 ms) and `onPopoverDidShow` (one turn after the window is on screen; the session scans, SMC and permission reads go here) and stopped only by `onPopoverDidClose`. Do not start a new timer from a view's `onAppear`.
 - The always-on items are cheap: one `changeCount` read per second, the event tap's window-bounds pre-check, and the shelf's throttled compare. Keep new always-on work at that level.
 - Any new timer must set its tolerance explicitly.
 - Session timers are added to `RunLoop.Mode.common`. A `.default`-mode timer does not fire while another app is tracking the mouse, which left the menu bar ring unchanged until the panel opened. `AppDelegate` also holds a `userInitiatedAllowingIdleSystemSleep` activity so App Nap does not defer those timers while no window is open.
@@ -66,7 +66,7 @@ Recorded earlier with a release build and the panel closed. This was `ps` RSS on
 | 2026-10-09 (controlled comparison) | current release, panel closed, 12 s after launch | `vmmap --summary` | physical footprint 11.6 MB (peak 12.0 MB); RSS 63.1 MB; CPU 0.0% |
 | 2026-10-09 (controlled comparison) | current release, panel open, 12 s after launch | `vmmap --summary` | physical footprint 31.0 MB (peak 32.9 MB); RSS 102.8 MB; CPU 0.0% |
 
-The pre-fix cause was the panel and its SwiftUI graph being built at launch. The panel is now built on first open (`showPanel` calls `setupPanel`). The controlled comparison found no idle physical-footprint regression against `HEAD` (11.6 MB current vs 11.9 MB baseline). Opening the dashboard adds about 19.4 MB in this sample (31.0 MB open vs 11.6 MB closed).
+The pre-fix cause was the panel and its SwiftUI graph being built at launch. The panel was then built on first open (`showPanel` calls `setupPanel`). Since 2026-11-14 it is built hidden 4 s after launch again (`prebuildPanel`), on purpose: the first click paid 0.3–1 s for the graph, and the user wants every open instant. The idle footprint is therefore the "panel open" figure (about 33 MB), not 11 MB. The controlled comparison found no idle physical-footprint regression against `HEAD` (11.6 MB current vs 11.9 MB baseline). Opening the dashboard adds about 19.4 MB in this sample (31.0 MB open vs 11.6 MB closed).
 
 Comparison conditions: same Mac (macOS 27.2, arm64), release configuration, signed bundle, panel closed, fresh launch, and a 12 s wait before sampling. The baseline source was `HEAD` (`520af0e`), built in a temporary copy with the current `scripts/build.sh` and two toolchain-compatibility adjustments: SwiftPM tools version 5.9 and `MainActor.assumeIsolated` around the existing AppKit entry point. No feature code was changed in that copy. Since only one fresh-launch sample was taken per build, treat the 0.3 MB difference as effectively unchanged rather than a meaningful reduction.
 
@@ -111,3 +111,23 @@ This resume (2026-10-09): `make release` exited 0. The compiler emitted linker s
 ## Open items
 - Find what grows the SwiftUI graph over a long session (see the 2026-10-10 audit).
 - Repeat the comparison with multiple fresh launches if a smaller-than-1 MB memory change needs to be distinguished from run-to-run variation.
+
+## Panel open latency (2026-11-14)
+
+Measured with `--panel-open-diagnose` (release build, quiet machine, a dozen live session rows). Before: 350–750 ms from the click to the window, more on the first click. Causes, in order: building the Sessions page on every click of the own Sessions icon (220–500 ms; it was unmounted 0.25 s after closing), the window becoming key inside `makeKeyAndOrderFront` (a whole-tree SwiftUI re-layout, 60–90 ms with the dashboard showing), the synchronous session scans and SMC read in `onPopoverWillShow` (20–70 ms), and the first click building the panel (0.3–1 s).
+
+Now: a same-page reopen is about 3 ms, a page switch 30–55 ms (the height change re-lays out the page stack). The key change and the scans run one turn after the first frame (`after_ms` in the diagnose, 30–80 ms, not visible). The Sessions page and Settings stay mounted; the panel is prebuilt 4 s after launch. Profiling note: `sample` and Instruments cannot attach to the signed bundle; copy it, re-sign ad hoc with the `com.apple.security.get-task-allow` entitlement, and sample that copy.
+
+## Page switch and main-thread scans (2026-11-17)
+
+Reported: closing the panel on the CPU page and then clicking the Sessions icon showed the CPU page for about 0.2 s before the Sessions list. Cause: the page request closed the stat page with its 0.2 s fade, which ran after the panel was already on screen (the header already said Sessions). Page requests now switch with no fade, and the closed stat page is unmounted at once.
+
+Measured with `--panel-open-diagnose` (case E is this path):
+
+| Step | Before | After |
+| --- | --- | --- |
+| Page switch to the dashboard, to first frame | 65–80 ms (layout, then a second layout on the window resize) | 25–40 ms (`presize`: the hidden window takes the page's last height first, one layout) |
+| CPU page closed, Sessions icon, to the right page on screen | ~25–35 ms + 200 ms fade of the old page | 40–75 ms, no old page |
+| `after_ms` (after the first frame) | 25–106 ms: fan SMC read 5–73 ms, Codex process walk 9–12 ms, Cursor up to 32 ms, Antigravity up to 17 ms | 7–11 ms (mostly the key change) |
+
+The scans after the first frame still stalled the page fades, which SwiftUI animates on the main thread. Codex, Cursor and Antigravity now read on background work for timer ticks and the panel opening; the fan read has its own queue. What remains is SwiftUI's own update of the mounted page stack (dashboard, Sessions, Settings), about 30–45 ms per page switch, and the key change re-checking an `NSSlider` in hidden Settings (5–13 ms, after the first frame).

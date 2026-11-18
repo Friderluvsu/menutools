@@ -18,8 +18,11 @@ enum AppWindowFocus {
         app.activate(from: .current)
     }
 
-    /// Brings forward the terminal (or other regular app) that owns this pid.
-    static func revealTerminal(for pid: pid_t) {
+    /// Brings forward the terminal (or other regular app) that owns this pid. In Terax, the pane
+    /// it runs in is shown and highlighted for `state`.
+    static func revealTerminal(for pid: pid_t, state: TeraxReveal.State? = nil) {
+        if TeraxReveal.reveal(pid: pid, state: state) { return }
+        TeraxReveal.trace("pid \(pid): falling back to activating the owning app")
         var current = pid
         for _ in 0..<8 {
             guard let parent = ProcessLookup.parentPid(current) else { return }

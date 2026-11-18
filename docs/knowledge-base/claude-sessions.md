@@ -44,7 +44,9 @@ The first time a session needs input, MenuTools posts **Claude needs input**, bo
 
 ## Finished runs (Done)
 
-A Claude process stays open after a task, so the finish is the transition instead: a session that was Running (or waiting on input mid-run) and then holds Idle for 3 s, after a run of at least 10 s, is marked **Done** (blue status, "4m ago" in the uptime slot), posts **Claude finished** (`name · project · ran 12m`) and turns the lower-left (blue) light on until the row is seen, with the same seen / fresh rules as other providers' Ended rows. Done clears when that session starts working again or its process exits. Run starts and Done marks are saved in `claude-session-watch.json`, so a relaunch mid-run still catches the finish. Claude has no separate Ended row.
+A Claude process stays open after a task, so the finish is the transition instead: a session that was Running (or waiting on input mid-run) and then holds Idle for 3 s, after a run of at least 10 s, is marked **Done** (blue status, "4m ago" in the uptime slot), posts **Claude finished** (`name · project · ran 12m`) and turns the lower-left (blue) light on. Done clears when that session starts working again or its process exits. Run starts and Done marks are saved in `claude-session-watch.json`, so a relaunch mid-run still catches the finish. Claude has no separate Ended row.
+
+A Done row stays unchecked (blue) until the user checks it. Opening the panel or the Sessions page checks nothing. A row is checked by clicking it (which also brings the terminal forward), by its ✓ button, by the card header's **Mark all checked** button, by clicking the **Claude finished** notification, or by Terax focusing the pane the session runs in (`paneFocused`, matched by the pane's shell pid). A checked Done row is a plain Idle row. The blue menu bar segment and the Sessions summary border follow unchecked Done rows only, and there is no expiry. Checking removes the pid from the `finished` list in `claude-session-watch.json`; an older file that saved `seen: true` loads as checked.
 
 | Rule | Value |
 |---|---|
@@ -52,4 +54,4 @@ A Claude process stays open after a task, so the finish is the transition instea
 | Finish | Idle (not working, not waiting) for `idleHold` = 3 s |
 | Announced | Run length (start → first idle read) ≥ `minimumRun` = 10 s |
 | Cleared | The same pid works again, or the session file goes away |
-| Seen | Panel opened with the row inline on the dashboard, or the Sessions page opened (`AppState.acknowledgeEndedSessions`) |
+| Checked | Explicit only: row click, ✓ button, **Mark all checked**, the notification, or Terax `paneFocused` (`check(underShell:)`). Opening the panel or the Sessions page does not check (`check(_:)`, `checkAll()`, `revealFinished(id:)`) |

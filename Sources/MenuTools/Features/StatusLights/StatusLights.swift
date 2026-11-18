@@ -158,6 +158,9 @@ final class StatusLightSettings: ObservableObject {
     @Published var sounds: Bool { didSet { save(sounds, oldValue, "StatusLightSounds") } }
     @Published var hoverPeek: Bool { didSet { save(hoverPeek, oldValue, "StatusLightHoverPeek") } }
     @Published var celebrate: Bool { didSet { save(celebrate, oldValue, "StatusLightCelebrate") } }
+    /// The lights on their own menu bar item, whose click opens the Sessions page. The main icon
+    /// keeps the static icon and opens the dashboard. Only while the lights are on.
+    @Published var separateItem: Bool { didSet { save(separateItem, oldValue, "SessionsStatusItem") } }
 
     private func save(_ value: Bool, _ old: Bool, _ key: String) {
         guard value != old else { return }
@@ -185,6 +188,7 @@ final class StatusLightSettings: ObservableObject {
         sounds = Self.flag("StatusLightSounds", default: false)
         hoverPeek = Self.flag("StatusLightHoverPeek", default: true)
         celebrate = Self.flag("StatusLightCelebrate", default: true)
+        separateItem = Self.flag("SessionsStatusItem", default: false)
     }
 
     func playDemo() { demoToken += 1 }
@@ -1270,6 +1274,13 @@ final class StatusLightsAnimator {
         }
     }
 
+    /// The lights move to another button: this animator is done with its view and timer.
+    func detach() {
+        lifeTimer?.invalidate()
+        lifeTimer = nil
+        view.removeFromSuperview()
+    }
+
     /// Lights on: a transparent placeholder image sizes the item and the view draws on top.
     /// Lights off: the view hides and the static icon takes over the button image.
     func setActive(_ active: Bool) {
@@ -1297,9 +1308,9 @@ final class StatusLightsAnimator {
             if counts[1] > 0 { runningStoppedAt = nil }
             if isNews, settings.enabled, settings.sounds {
                 if counts[0] > previous[0] {
-                    NSSound(named: "Glass")?.play()
+                    Alerts.play("Glass")
                 } else if counts[2] > previous[2] {
-                    NSSound(named: "Tink")?.play()
+                    Alerts.play("Tink")
                 }
             }
             // Claude marks Done a few seconds after its run stops, so the end can arrive on a later tick.

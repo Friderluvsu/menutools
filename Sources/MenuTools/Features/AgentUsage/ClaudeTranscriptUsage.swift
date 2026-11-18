@@ -25,8 +25,15 @@ final class ClaudeTranscriptUsage: @unchecked Sendable {
 
     private let lock = NSLock()
     private var states: [String: SessionState] = [:]
+    /// Bytes read in the current pass. A big pass leaves the small malloc zone full of emptied
+    /// regions (1 GB after the first read of 700 MB of transcripts, most of it swapped before the
+    /// allocator got round to it), so the pass ends by handing them back.
+    private var bytesThisPass = 0
+    private static let reliefThreshold = 8 * 1024 * 1024
 
-    private static let chunkSize = 4 * 1024 * 1024
+    /// Small enough that the chunk and the line buffer stay out of the large-block malloc zone,
+    /// whose freed blocks stayed dirty: the first pass over 700 MB of transcripts peaked at 700 MB.
+    private static let chunkSize = 512 * 1024
     private static let missRetry: TimeInterval = 10
     private static let subagentListInterval: TimeInterval = 2
 
@@ -37,11 +44,15 @@ final class ClaudeTranscriptUsage: @unchecked Sendable {
         let ids = Set(sessions.map(\.id))
         states = states.filter { ids.contains($0.key) }
         var result: [String: SessionUsage] = [:]
+        bytesThisPass = 0
         for session in sessions {
             var state = states[session.id] ?? SessionState()
             refresh(&state, session: session)
             states[session.id] = state
             if !state.usage.isEmpty { result[session.id] = state.usage }
+        }
+        if bytesThisPass > Self.reliefThreshold {
+            malloc_zone_pressure_relief(nil, 0)
         }
         return result
     }
@@ -88,14 +99,26 @@ final class ClaudeTranscriptUsage: @unchecked Sendable {
             while cursor.offset < size {
                 guard let chunk = try handle.read(upToCount: Self.chunkSize), !chunk.isEmpty else { break }
                 cursor.offset += UInt64(chunk.count)
+                bytesThisPass += chunk.count
                 var buffer = cursor.tail
                 buffer.append(chunk)
-                var start = buffer.startIndex
-                while let newline = buffer[start...].firstIndex(of: 0x0A) {
-                    absorb(buffer[start..<newline], state: &state, isMain: isMain)
-                    start = newline + 1
+                // memchr over the raw bytes: `Data.firstIndex(of:)` on slices walked byte by byte
+                // through the collection path (2.6 s for the first pass over 700 MB).
+                let (lines, consumed) = buffer.withUnsafeBytes { raw -> ([Range<Int>], Int) in
+                    guard let base = raw.baseAddress else { return ([], 0) }
+                    var lines: [Range<Int>] = []
+                    var start = 0
+                    while start < raw.count, let hit = memchr(base + start, 0x0A, raw.count - start) {
+                        let end = UnsafeRawPointer(hit) - base
+                        lines.append(start..<end)
+                        start = end + 1
+                    }
+                    return (lines, start)
                 }
-                cursor.tail = start < buffer.endIndex ? Data(buffer[start...]) : Data()
+                for line in lines {
+                    absorb(buffer[line], state: &state, isMain: isMain)
+                }
+                cursor.tail = consumed < buffer.count ? buffer.subdata(in: consumed..<buffer.count) : Data()
             }
         } catch {
             // Keep what was read; the next pass retries from the stored offset.
@@ -107,8 +130,18 @@ final class ClaudeTranscriptUsage: @unchecked Sendable {
     private static let assistantMarker = Data("\"assistant\"".utf8)
     private let decoder = JSONDecoder()
 
+    /// `memmem` on the raw bytes; `Data.range(of:)` was the other slow path of the first pass.
+    private static func contains(_ line: Data, _ marker: Data) -> Bool {
+        line.withUnsafeBytes { raw in
+            marker.withUnsafeBytes { needle in
+                guard let base = raw.baseAddress, let pattern = needle.baseAddress else { return false }
+                return memmem(base, raw.count, pattern, needle.count) != nil
+            }
+        }
+    }
+
     private func absorb(_ line: Data, state: inout SessionState, isMain: Bool) {
-        guard line.count > 40, line.range(of: Self.usageMarker) != nil, line.range(of: Self.assistantMarker) != nil,
+        guard line.count > 40, Self.contains(line, Self.assistantMarker), Self.contains(line, Self.usageMarker),
             let entry = try? decoder.decode(TranscriptLine.self, from: line),
             entry.type == "assistant", let message = entry.message, let usage = message.usage
         else { return }

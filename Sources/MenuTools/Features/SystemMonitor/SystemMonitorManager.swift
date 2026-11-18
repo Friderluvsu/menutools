@@ -232,10 +232,11 @@ final class SystemMonitorManager: ObservableObject {
 
             if cpuResult == KERN_SUCCESS {
                 if let prev = prevCPU {
-                    let user = Double(cpuInfo.cpu_ticks.0 - prev.cpu_ticks.0)
-                    let sys = Double(cpuInfo.cpu_ticks.1 - prev.cpu_ticks.1)
-                    let idle = Double(cpuInfo.cpu_ticks.2 - prev.cpu_ticks.2)
-                    let nice = Double(cpuInfo.cpu_ticks.3 - prev.cpu_ticks.3)
+                    // Wrapping: the UInt32 tick counters roll over after weeks of uptime.
+                    let user = Double(cpuInfo.cpu_ticks.0 &- prev.cpu_ticks.0)
+                    let sys = Double(cpuInfo.cpu_ticks.1 &- prev.cpu_ticks.1)
+                    let idle = Double(cpuInfo.cpu_ticks.2 &- prev.cpu_ticks.2)
+                    let nice = Double(cpuInfo.cpu_ticks.3 &- prev.cpu_ticks.3)
 
                     let total = user + sys + idle + nice
                     if total > 0 {

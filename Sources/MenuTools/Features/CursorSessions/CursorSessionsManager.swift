@@ -1,24 +1,28 @@
 import AppKit
 import Foundation
 import SwiftUI
-import UserNotifications
 
-/// Live Cursor agent chats, and a record of chats that finished after MenuTools saw them running.
+/// Live Cursor agent chats (the app and the terminal CLI), and a record of chats that finished after
+/// MenuTools saw them running.
 @MainActor
 final class CursorSessionsManager: ObservableObject {
     @Published private(set) var sessions: [CursorSession] = []
     @Published private(set) var ended: [CursorEndedSession] = []
-    /// Ended ids that were new when this panel open started. They stay blue until the panel closes.
-    @Published private(set) var freshEnded: Set<String> = []
 
     private let previewMode: Bool
     private var timer: Timer?
     private var tracking: [String: CursorComposerFact] = [:]
-    private var askedPermission = false
     private var panelOpen = false
     /// Session ids we already announced as needing input. Cleared when that chat is seen not waiting.
     private var awaitingInput: Set<String> = []
     private var pollInterval: TimeInterval = 15
+    private let cli = CursorCLIScanner()
+    private var cliPresent = false
+    private var loading = false
+    private var refreshAgain = false
+    private var loadGeneration = 0
+    /// Every scan runs here, the synchronous ones too: the scan keeps static caches.
+    private static let scanQueue = DispatchQueue(label: "MenuTools.CursorScan", qos: .utility)
 
     private static let fastInterval: TimeInterval = 2
     private static let idleInterval: TimeInterval = 15
@@ -29,11 +33,11 @@ final class CursorSessionsManager: ObservableObject {
         self.previewMode = previewMode
         if previewMode {
             sessions = CursorSession.samples
-            ended = [.sample]
+            ended = [.sample, .checkedSample]
             return
         }
         load()
-        ensureNotificationPermission()
+        SessionNotifier.ensurePermission()
         refresh()
         reschedule()
     }
@@ -42,16 +46,20 @@ final class CursorSessionsManager: ObservableObject {
     func startMonitoring() {
         guard !previewMode else { return }
         panelOpen = true
-        noteFreshEnded()
-        refresh()
+        refresh(inBackground: true)
         reschedule()
+    }
+
+    /// Re-reads now, for a Terax refresh. Changes nothing the panel shows as seen.
+    func refreshNow() {
+        guard !previewMode else { return }
+        refresh()
     }
 
     /// Panel closed. Ended rows stay until dismissed, so two finishes are not lost if you close between them.
     func stopMonitoring() {
         guard !previewMode else { return }
         panelOpen = false
-        if !freshEnded.isEmpty { freshEnded = [] }
         reschedule()
     }
 
@@ -59,28 +67,34 @@ final class CursorSessionsManager: ObservableObject {
         guard ended.contains(where: { $0.id == id }) else { return }
         ended.removeAll { $0.id == id }
         save()
+        NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
     }
 
     /// Raises the Cursor window for this project, then brings Cursor forward.
     func reveal(_ session: CursorSession) {
-        CursorWindowFocus.reveal(project: session.project, cwd: session.cwd)
+        if let pid = session.pid {
+            let state: TeraxReveal.State =
+                session.needsInput
+                ? .input : session.status == "running" ? .running : session.status == "done" ? .done : .idle
+            AppWindowFocus.revealTerminal(for: pid, state: state)
+        } else {
+            CursorWindowFocus.reveal(project: session.project, cwd: session.cwd)
+        }
     }
 
     func revealEnded(_ item: CursorEndedSession) {
         CursorWindowFocus.reveal(project: item.project, cwd: item.cwd)
-        if let index = ended.firstIndex(where: { $0.id == item.id }), !ended[index].seen {
-            ended[index].seen = true
-            save()
-        }
+        check(item.id)
     }
 
     private func reschedule() {
-        let interval = panelOpen || ProcessLookup.isRunning(named: "Cursor", missRetry: 4) ? Self.fastInterval : Self.idleInterval
+        let fast = panelOpen || cliPresent || ProcessLookup.isRunning(named: "Cursor", missRetry: 4)
+        let interval = fast ? Self.fastInterval : Self.idleInterval
         guard timer == nil || pollInterval != interval else { return }
         pollInterval = interval
         timer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in self?.refresh(inBackground: true) }
         }
         timer.tolerance = interval == Self.fastInterval ? 0.5 : interval * 0.3
         // `.common` still fires while another app is tracking the mouse. `.default` does not.
@@ -88,30 +102,67 @@ final class CursorSessionsManager: ObservableObject {
         self.timer = timer
     }
 
-    private func refresh() {
+    /// Timer ticks and the panel opening read the database off the main thread (up to 30 ms, which
+    /// stalled the panel's page fades). Launch and a Terax refresh read synchronously.
+    private func refresh(inBackground: Bool = false) {
+        guard inBackground else {
+            loadGeneration += 1
+            apply(Self.scanQueue.sync { CursorSessionFiles.scan() })
+            return
+        }
+        guard !loading else {
+            refreshAgain = true
+            return
+        }
+        loading = true
+        let generation = loadGeneration
+        Self.scanQueue.async { [weak self] in
+            let scan = CursorSessionFiles.scan()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in
+                    guard let self else { return }
+                    self.loading = false
+                    // A synchronous read landed meanwhile: this snapshot is older than it.
+                    if generation == self.loadGeneration { self.apply(scan) }
+                    if self.refreshAgain {
+                        self.refreshAgain = false
+                        self.refresh(inBackground: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func apply(_ scan: CursorScan) {
         defer { NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil) }
-        let scan = CursorSessionFiles.scan()
         // A busy lock on Cursor's multi-GB DB used to return empty live rows and blank the ring until
         // the panel opened (immediate refresh). Keep the last good list instead.
         if scan.readFailed {
             reschedule()
             return
         }
-        if scan.live != sessions { sessions = scan.live }
+        let terminal = cli.scan()
+        cliPresent = terminal.present
+        let live = Self.ordered(scan.live + terminal.live)
+        if live != sessions { sessions = live }
         // Cursor quitting is not a chat finishing. Leave the tracked runs in place until the headers say so.
-        guard scan.cursorRunning else {
+        guard scan.cursorRunning || !terminal.facts.isEmpty else {
             reschedule()
             return
         }
-        let byID = Dictionary(scan.facts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let facts = scan.facts + terminal.facts
+        let byID = Dictionary(facts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var changed = false
         // Same composer id resumed after an Ended row: drop the stale Ended so the card is not duplicated.
-        let liveIDs = Set(scan.live.map(\.id))
+        // An open CLI chat that only sits at its prompt is listed too; it does not count as resumed.
+        let liveIDs = Set(live.filter { $0.status == "running" || $0.needsInput }.map(\.id))
         if ended.contains(where: { liveIDs.contains($0.id) }) {
             ended.removeAll { liveIDs.contains($0.id) }
             changed = true
         }
+        let openIDs = Set(live.map(\.id))
         var finished: [CursorEndedSession] = []
+        var finishedOpen: [CursorEndedSession] = []
         for (id, tracked) in tracking {
             guard let fact = byID[id] else { continue }
             if fact.unfinished {
@@ -123,20 +174,25 @@ final class CursorSessionsManager: ObservableObject {
                 tracking.removeValue(forKey: id)
                 changed = true
                 guard !ended.contains(where: { $0.id == id }) else { continue }
-                finished.append(
-                    CursorEndedSession(
-                        id: id,
-                        name: fact.name.isEmpty ? tracked.name : fact.name,
-                        project: fact.project,
-                        cwd: fact.cwd.isEmpty ? tracked.cwd : fact.cwd,
-                        subtitle: fact.subtitle.isEmpty ? tracked.subtitle : fact.subtitle,
-                        endedAt: Date(),
-                        seen: false
-                    ))
+                let item = CursorEndedSession(
+                    id: id,
+                    name: fact.name.isEmpty ? tracked.name : fact.name,
+                    project: fact.project,
+                    cwd: fact.cwd.isEmpty ? tracked.cwd : fact.cwd,
+                    subtitle: fact.subtitle.isEmpty ? tracked.subtitle : fact.subtitle,
+                    endedAt: Date(),
+                    seen: false
+                )
+                // A CLI chat still open shows its finished turn on its own row as Done.
+                if openIDs.contains(id) {
+                    finishedOpen.append(item)
+                } else {
+                    finished.append(item)
+                }
             }
         }
         // Anything the card already shows as running must be watched, including a second chat that just started.
-        for session in scan.live where session.status == "running" {
+        for session in live where session.status == "running" {
             guard let fact = byID[session.id] else { continue }
             if tracking[session.id] != fact {
                 tracking[session.id] = fact
@@ -146,33 +202,44 @@ final class CursorSessionsManager: ObservableObject {
         if !finished.isEmpty {
             ended.append(contentsOf: finished)
             changed = true
-            ensureNotificationPermission()
-            for item in finished { notify(item) }
         }
-        if absorbInput(scan.live) { changed = true }
+        if !finished.isEmpty || !finishedOpen.isEmpty {
+            SessionNotifier.ensurePermission()
+            for item in finished + finishedOpen { notify(item) }
+        }
+        if absorbInput(live) { changed = true }
         if changed { save() }
         reschedule()
     }
 
-    /// Remember which ended rows are new. They stay blue, and the menu bar stays blue, until the row is on screen.
-    private func noteFreshEnded() {
-        let fresh = Set(ended.filter { !$0.seen }.map(\.id))
-        if fresh != freshEnded { freshEnded = fresh }
+    /// App chats first, so a chat both sources report is listed once.
+    private static func ordered(_ live: [CursorSession]) -> [CursorSession] {
+        var ids = Set<String>()
+        return live.filter { ids.insert($0.id).inserted }.sorted { lhs, rhs in
+            if lhs.needsInput != rhs.needsInput { return lhs.needsInput }
+            return (lhs.startedAt ?? .distantPast) > (rhs.startedAt ?? .distantPast)
+        }
     }
 
-    /// The ended rows are visible. Clear the menu-bar blue and keep the blue row until the panel closes.
-    func acknowledgeEnded() {
+    /// The user dealt with this ended row (its click, its ✓, its notification). It turns grey and
+    /// folds away with the quiet rows; dismissing removes it.
+    func check(_ id: String) {
+        guard !previewMode, let index = ended.firstIndex(where: { $0.id == id }), !ended[index].seen else { return }
+        ended[index].seen = true
+        save()
+        NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
+    }
+
+    func checkAll() {
         guard !previewMode, hasUnseenEnded else { return }
-        freshEnded.formUnion(ended.filter { !$0.seen }.map(\.id))
         for index in ended.indices { ended[index].seen = true }
         save()
         NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
     }
 
-    private func ensureNotificationPermission() {
-        guard !askedPermission else { return }
-        askedPermission = true
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    /// From a "finished" notification click.
+    func revealEnded(id: String) {
+        if let item = ended.first(where: { $0.id == id }) { revealEnded(item) }
     }
 
     /// Returns true when the set of waiting chats changed. Does not save.
@@ -183,28 +250,21 @@ final class CursorSessionsManager: ObservableObject {
         let fresh = waiting.filter { !awaitingInput.contains($0.id) }
         awaitingInput = ids
         if !fresh.isEmpty {
-            ensureNotificationPermission()
+            SessionNotifier.ensurePermission()
             for item in fresh { notifyInput(item) }
         }
         return true
     }
 
     private func notifyInput(_ item: CursorSession) {
-        let content = UNMutableNotificationContent()
-        content.title = "Cursor needs input"
-        content.body = item.project == "—" || item.project.isEmpty ? item.name : "\(item.name) · \(item.project)"
-        content.sound = .default
-        let request = UNNotificationRequest(identifier: "cursor-input-\(item.id)", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        SessionNotifier.post(
+            title: "Cursor needs input", name: item.name, project: item.project, identifier: "cursor-input-\(item.id)")
     }
 
     private func notify(_ item: CursorEndedSession) {
-        let content = UNMutableNotificationContent()
-        content.title = "Cursor finished"
-        content.body = item.project == "—" ? item.name : "\(item.name) · \(item.project)"
-        content.sound = .default
-        let request = UNNotificationRequest(identifier: "cursor-ended-\(item.id)", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        SessionNotifier.post(
+            title: "Cursor finished", name: item.name, project: item.project, identifier: "cursor-ended-\(item.id)",
+            session: "cursor:\(item.id)")
     }
 
     private static var storeURL: URL {

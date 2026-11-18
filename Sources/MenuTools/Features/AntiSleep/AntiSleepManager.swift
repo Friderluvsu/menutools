@@ -96,6 +96,9 @@ final class AntiSleepManager: ObservableObject {
     private var sleepDisabledTarget = false
     private var sleepWorker: Task<Void, Never>?
 
+    /// `pmset disablesleep 1` is in effect or still being changed; system sleep would be refused.
+    var sleepDisabledInEffect: Bool { sleepDisabledApplied || sleepWorker != nil }
+
     init(previewMode: Bool = false) {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: Keys.preventDisplaySleep) != nil {
@@ -246,10 +249,11 @@ final class AntiSleepManager: ObservableObject {
         sleepWorker = Task { [weak self] in
             while let self, self.sleepDisabledApplied != self.sleepDisabledTarget {
                 let target = self.sleepDisabledTarget
-                if await SMCHelperManager.shared.setLidSleep(disabled: target) {
+                // Never a prompt: Closed-lid runs with the lid closed or from the phone, nobody to answer.
+                if await SMCHelperManager.shared.setLidSleep(disabled: target, allowPrompt: false) {
                     self.sleepDisabledApplied = target
                 } else if target {
-                    // Could not disable sleep (admin cancelled): Closed-lid would only pretend to work.
+                    // Could not disable sleep (helper failed): Closed-lid would only pretend to work.
                     self.sleepDisabledTarget = self.sleepDisabledApplied
                     self.lidOn = false
                     self.lidEnd = nil
@@ -470,7 +474,7 @@ final class AntiSleepManager: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        center.add(UNNotificationRequest(identifier: "antisleep.lid.guard", content: content, trigger: nil))
+        Alerts.post(UNNotificationRequest(identifier: "antisleep.lid.guard", content: content, trigger: nil))
     }
 }
 

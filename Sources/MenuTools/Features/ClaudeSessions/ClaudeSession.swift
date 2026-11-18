@@ -111,6 +111,21 @@ struct ClaudeSession: Identifiable, Equatable, Sendable {
             version: "2.1.316",
             startedAt: Date(timeIntervalSinceNow: -8 * 60)
         ),
+        // Idle with no finish: folds under "+1 idle".
+        ClaudeSession(
+            pid: 12101,
+            sessionId: "12121212-3434-4565-8787-909090909090",
+            name: "translator-5f",
+            project: "translator",
+            cwd: "/Users/me/projects/translator",
+            status: "idle",
+            waitingFor: nil,
+            hasActiveWork: false,
+            kind: "interactive",
+            entrypoint: "cli",
+            version: "2.1.316",
+            startedAt: Date(timeIntervalSinceNow: -17 * 60)
+        ),
         // Finished run: the preview marks it Done.
         ClaudeSession(
             pid: 12077,

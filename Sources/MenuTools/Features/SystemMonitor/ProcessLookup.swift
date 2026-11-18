@@ -54,6 +54,33 @@ enum ProcessLookup {
         pids { isLiveCodex($0) }
     }
 
+    /// Cursor's terminal agent runs as `node` from `~/.local/share/cursor-agent/versions/…`. The copy
+    /// Cursor.app keeps for its own background worker lives under Application Support; skip it.
+    nonisolated static func isCursorCLI(_ pid: pid_t) -> Bool {
+        guard pid > 0 else { return false }
+        var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return false }
+        let full = String(cString: path)
+        if full.contains("/Library/Application Support/") { return false }
+        return full.contains("/.local/share/cursor-agent/")
+            || URL(fileURLWithPath: full).lastPathComponent == "cursor-agent"
+    }
+
+    nonisolated static func liveCursorCLIPids() -> [pid_t] {
+        pids { isCursorCLI($0) }
+    }
+
+    /// The Antigravity CLI: a binary named `agy`, outside the IDE bundle.
+    nonisolated static func liveAgyPids() -> [pid_t] {
+        pids { pid in
+            var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return false }
+            let full = String(cString: path)
+            return !full.contains(".app/")
+                && URL(fileURLWithPath: full).lastPathComponent.caseInsensitiveCompare("agy") == .orderedSame
+        }
+    }
+
     /// Antigravity IDE (Electron) or the `agy` hub. A miss is trusted for 4 s, so the 2 s session
     /// poll does not walk the whole process table on every tick while Antigravity is closed.
     nonisolated static func isLiveAntigravity() -> Bool {
@@ -142,5 +169,19 @@ enum ProcessLookup {
         guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0 else { return nil }
         let parent = info.kp_eproc.e_ppid
         return parent > 1 ? parent : nil
+    }
+
+    /// True when `pid` is `ancestor` or runs below it, within 16 parents.
+    nonisolated static func descends(
+        _ pid: pid_t, from ancestor: pid_t, parent: (pid_t) -> pid_t? = parentPid
+    ) -> Bool {
+        guard ancestor > 1 else { return false }
+        var current = pid
+        for _ in 0..<16 {
+            if current == ancestor { return true }
+            guard let next = parent(current), next != current else { return false }
+            current = next
+        }
+        return false
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Compact AI limits: one ~26pt row per provider with its two most constrained windows.
@@ -12,7 +13,7 @@ struct AILimitsCard: View {
                     header(now: context.date)
 
                     if manager.visibleProviders.isEmpty {
-                        Text("All hidden in Settings")
+                        Text("All hidden")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
@@ -23,6 +24,9 @@ struct AILimitsCard: View {
                                 usage: manager.usage[provider]?.rolledOver(now: context.date),
                                 now: context.date,
                                 onLogin: { manager.openLoginTerminal(for: provider) })
+                            .contextMenu {
+                                Button("Hide \(provider.shortName)") { manager.setEnabled(provider, false) }
+                            }
                         }
                     }
                 }
@@ -40,11 +44,12 @@ struct AILimitsCard: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
             }
+            providerMenu
             Button {
                 Task { await manager.refresh(force: true) }
             } label: {
                 Group {
-                    if manager.isRefreshing {
+                    if manager.refreshing.contains(where: manager.enabledProviders.contains) {
                         ProgressView().controlSize(.mini)
                     } else {
                         Image(systemName: "arrow.clockwise")
@@ -56,10 +61,49 @@ struct AILimitsCard: View {
             }
             .buttonStyle(.borderless)
             .suppressesFocusRing()
-            .disabled(manager.isRefreshing)
             .help("Refresh")
         }
         .frame(height: 16)
+    }
+
+    /// Which providers the card shows; the same switches as Settings → General → AI Limits.
+    /// A plain button with an AppKit menu: SwiftUI's borderless `Menu` draws its icon at AppKit's
+    /// size, larger than the refresh icon beside it.
+    private var providerMenu: some View {
+        Button {
+            ProviderVisibilityMenu.show(manager: manager)
+        } label: {
+            Image(systemName: "eye")
+                .font(.system(size: 10.5))
+                .frame(width: 16, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .suppressesFocusRing()
+        .help("Show or hide providers")
+    }
+}
+
+/// Check-marked provider list under the pointer. Items act through closures.
+@MainActor
+private enum ProviderVisibilityMenu {
+    private final class Item: NSMenuItem {
+        var onPick: (() -> Void)?
+        @objc func pick() { onPick?() }
+    }
+
+    static func show(manager: AILimitsManager) {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for provider in AIProvider.allCases {
+            let item = Item(title: provider.shortName, action: #selector(Item.pick), keyEquivalent: "")
+            item.target = item
+            let shown = manager.enabledProviders.contains(provider)
+            item.state = shown ? .on : .off
+            item.onPick = { manager.setEnabled(provider, !shown) }
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 }
 

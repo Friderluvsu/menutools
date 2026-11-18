@@ -103,12 +103,12 @@ File: `~/Library/Application Support/MenuTools/ai-limits-cache.json` (version 1,
 |---|---|---|
 | `staleInterval` | 120 s | Panel open re-fetches a provider only if its last attempt is older. |
 | `backgroundInterval` | 300 s, tolerance 30 s | Timer while the panel is open. Stopped on close. |
-| `minimumGap` | 10 s | Refresh button: at most one attempt per provider. |
+| `minimumGap` | 10 s | Refresh button: at most one attempt per provider. A press inside the gap waits for it to end, then fetches. Providers in flight (`refreshing`) are skipped, never the whole refresh. |
 | `staleAfter` | 900 s | Data older than this is marked stale. |
 | soft back-off | 60 s × 2^(n−1), max 900 s | After a failure. Background polls skip the provider. The refresh button ignores it. |
 | 429 back-off | `Retry-After` clamped to 60 s…1 h; with no header, 300 s × 2^(n−1), max 1 h | Hard block, persisted in the cache file. Never bypassed. |
 
-`AILimitsManager.startMonitoring()` runs from `AppState.onPopoverWillShow` and `stopMonitoring()` from `onPopoverDidClose`.
+`AILimitsManager.startMonitoring()` runs from `AppState.onPopoverDidShow` and `stopMonitoring()` from `onPopoverDidClose`.
 
 ## Status strings and failure modes
 

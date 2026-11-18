@@ -9,6 +9,9 @@ struct SessionCardHeader: View {
 
     let kind: Kind
     var tally: SessionStatusTally = SessionStatusTally()
+    /// The marks filter the card's rows; the double check marks every finish checked.
+    var listState: SessionListState? = nil
+    var onCheckAll: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 5) {
@@ -16,13 +19,32 @@ struct SessionCardHeader: View {
             Text(kind.title)
                 .font(.system(size: 10.5, weight: .semibold))
                 .lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 6)
-            SessionStatusMarks(tally: tally)
+            if let listState {
+                SessionStatusMarks(
+                    tally: tally, selected: listState.filter(for: kind, tally: tally),
+                    onSelect: { listState.toggleFilter($0, for: kind, tally: tally) })
+            } else {
+                SessionStatusMarks(tally: tally)
+            }
+            if let onCheckAll, tally.ended > 0 {
+                Button(action: onCheckAll) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(SessionStatusTone.ended.color)
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .suppressesFocusRing()
+                .help("Mark all checked")
+                .accessibilityLabel("Mark all \(kind.title) checked")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 16)
-        .accessibilityElement(children: .ignore)
-        .accessibilityAddTraits(.isHeader)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
     }
 

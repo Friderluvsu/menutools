@@ -127,21 +127,28 @@ public final class SMCHelperManager: ObservableObject {
         }.value
     }
 
-    public func setLidSleep(disabled: Bool) async -> Bool {
+    /// `allowPrompt` false: helper and `sudo -n` only, for changes made with nobody at the Mac.
+    public func setLidSleep(disabled: Bool, allowPrompt: Bool = true) async -> Bool {
         let useHelper = isHelperInstalled
         let val = disabled ? "1" : "0"
         // Off the main actor: the helper, sudo and the admin prompt fallback may all block.
         return await Task.detached(priority: .userInitiated) {
-            Self.runPmset(setting: "disablesleep", value: val, useHelper: useHelper)
+            Self.runPmset(setting: "disablesleep", value: val, useHelper: useHelper, allowPrompt: allowPrompt)
         }.value
     }
 
-    public func setLowPowerMode(enabled: Bool) async -> Bool {
+    public func setLowPowerMode(enabled: Bool, allowPrompt: Bool = true) async -> Bool {
         let useHelper = isHelperInstalled
         let val = enabled ? "1" : "0"
         return await Task.detached(priority: .userInitiated) {
-            Self.runPmset(setting: "lowpowermode", value: val, useHelper: useHelper)
+            Self.runPmset(setting: "lowpowermode", value: val, useHelper: useHelper, allowPrompt: allowPrompt)
         }.value
+    }
+
+    /// Blocking Low Power Mode restore for app termination (Rest mode turned it on). Never a prompt.
+    nonisolated public static func restoreLowPowerSync() {
+        let useHelper = FileManager.default.isExecutableFile(atPath: installedHelperPath)
+        _ = runPmset(setting: "lowpowermode", value: "0", useHelper: useHelper, allowPrompt: false)
     }
 
     /// Blocking restore of system sleep for app termination, where no Task would get to run.

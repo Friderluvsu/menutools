@@ -22,9 +22,9 @@ enum Shell {
 
         do {
             try process.run()
-            process.waitUntilExit()
-
+            // Read first: waiting first deadlocks once the child fills the pipe (64 KB).
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
             let output = String(data: data, encoding: .utf8) ?? ""
             return (output.trimmingCharacters(in: .whitespacesAndNewlines), process.terminationStatus)
         } catch {
@@ -88,23 +88,25 @@ enum Shell {
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
         process.environment = env
 
-        process.terminationHandler = { proc in
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            DispatchQueue.main.async {
-                completion(output.trimmingCharacters(in: .whitespacesAndNewlines), proc.terminationStatus)
-            }
-        }
-
         do {
             try process.run()
-            return process
         } catch {
             DispatchQueue.main.async {
                 completion(error.localizedDescription, -1)
             }
             return nil
         }
+        // Drain the pipe while the child runs: a termination handler that reads afterwards never fires
+        // once the child blocks on a full pipe.
+        DispatchQueue.global(qos: .utility).async {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            DispatchQueue.main.async {
+                completion(output.trimmingCharacters(in: .whitespacesAndNewlines), process.terminationStatus)
+            }
+        }
+        return process
     }
 
     static func which(_ tool: String) -> String? {

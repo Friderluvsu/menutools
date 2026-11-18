@@ -30,6 +30,7 @@ struct PopoverContentView: View {
     @State private var statMounted = false
     @State private var settingsFadeToken = 0
     @StateObject private var sessionDetails: SessionDetailSelection
+    @StateObject private var sessionList = SessionListState()
 
     init(
         appState: AppState,
@@ -80,6 +81,7 @@ struct PopoverContentView: View {
             settingsCrossfade
         }
         .environmentObject(sessionDetails)
+        .environmentObject(sessionList)
         .fixedSize(horizontal: false, vertical: true)
         .reportsPanelHeight()
         .frame(width: MacToolsTheme.popoverWidth)
@@ -123,11 +125,27 @@ struct PopoverContentView: View {
                     settingsMounted = true
                 }
             }
+            if !sessionsMounted {
+                // The Sessions page too (220–500 ms on the click with a dozen rows), after Settings.
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.sessionsPrewarmDelay) {
+                    sessionsMounted = true
+                }
+            }
             noteSessionsPageVisible()
         }
         .onPreferenceChange(SessionPageHeightKey.self) { values in
             MainActor.assumeIsolated { applyMeasuredHeights(values) }
         }
+        .onReceive(appState.panelPageRequests) { page in
+            // The panel is hidden here: no fades, or the old page shows over the new one for 0.2 s.
+            if showSettings { setSettings(false, animated: false) }
+            if showStat { closeStat(animated: false) }
+            switch page {
+            case .sessions: if !showSessions { openSessions(animated: false) }
+            case .dashboard: if showSessions { closeSessions(animated: false) }
+            }
+        }
+        .onReceive(PanelOpenDiagnose.statRequests) { openStat($0) }
         .onChange(of: dashboardHeight) { _, height in
             guard !showSessions, !showSettings, !showStat else { return }
             setVisibleHeight(height)
@@ -175,7 +193,7 @@ struct PopoverContentView: View {
                     showAntiSleepPicker = true
                 },
                 openFanPicker: { openStat(.fan) },
-                openSessions: openSessions,
+                openSessions: { openSessions() },
                 openStat: openStat
             )
             .padding(MacToolsTheme.outerPadding)
@@ -195,7 +213,7 @@ struct PopoverContentView: View {
                     codex: appState.codexSessions,
                     antigravity: appState.antigravitySessions,
                     stackRevealed: true,
-                    onEmpty: closeSessions
+                    onEmpty: { closeSessions() }
                 )
                 .padding(MacToolsTheme.outerPadding)
                 .fixedSize(horizontal: false, vertical: true)
@@ -287,7 +305,7 @@ struct PopoverContentView: View {
         }
     }
 
-    private func setSettings(_ show: Bool) {
+    private func setSettings(_ show: Bool, animated: Bool = true) {
         settingsFadeToken += 1
         let token = settingsFadeToken
         if show {
@@ -305,6 +323,10 @@ struct PopoverContentView: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) { showSettings = show }
         noteSessionsPageVisible()
+        guard animated else {
+            withTransaction(transaction) { settingsOpacity = show ? 1 : 0 }
+            return
+        }
         DispatchQueue.main.async {
             guard token == settingsFadeToken else { return }
             withAnimation(SessionDashboardLayout.pageAnimation) {
@@ -314,18 +336,18 @@ struct PopoverContentView: View {
         // Closed Settings stays mounted (hidden, no hit testing), so the next open is a fade only.
     }
 
-    /// Settings is prewarmed this long after the dashboard first appears.
+    /// Settings is prewarmed this long after the dashboard first appears; the Sessions page follows.
     private static let settingsPrewarmDelay: TimeInterval = 0.6
+    private static let sessionsPrewarmDelay: TimeInterval = 1.2
 
-    /// The Sessions page is showing, so its ended rows count as seen. The dashboard summary does not.
+    /// Whether the Sessions page is the page on screen. Showing it checks nothing.
     private func noteSessionsPageVisible() {
-        let visible = showSessions && !showSettings && !showStat
-        let becameVisible = visible && !appState.sessionsPageVisible
-        appState.sessionsPageVisible = visible
-        if becameVisible { appState.acknowledgeEndedSessions() }
+        appState.sessionsPageVisible = showSessions && !showSettings && !showStat
     }
 
-    private func openSessions() {
+    /// `animated` false: the page is switched before a hidden panel comes on screen (a status item
+    /// click chose it), so no frame of the previous page shows.
+    private func openSessions(animated: Bool = true) {
         resignHeaderFocus()
         sessionsMounted = true
         if sessionsHeight > 1 { setVisibleHeight(sessionsHeight) }
@@ -333,26 +355,32 @@ struct PopoverContentView: View {
         layout.disablesAnimations = true
         withTransaction(layout) { showSessions = true }
         noteSessionsPageVisible()
+        guard animated else {
+            withTransaction(layout) { sessionsOpacity = 1 }
+            return
+        }
         // Fade after the height has been committed, so the crossfade cannot move the panel.
         DispatchQueue.main.async {
             withAnimation(SessionDashboardLayout.pageAnimation) { sessionsOpacity = 1 }
         }
     }
 
-    private func closeSessions() {
+    private func closeSessions(animated: Bool = true) {
         resignHeaderFocus()
         if dashboardHeight > 1 { setVisibleHeight(dashboardHeight) }
         var layout = Transaction()
         layout.disablesAnimations = true
         withTransaction(layout) { showSessions = false }
         noteSessionsPageVisible()
+        guard animated else {
+            withTransaction(layout) { sessionsOpacity = 0 }
+            return
+        }
         DispatchQueue.main.async {
             withAnimation(SessionDashboardLayout.pageAnimation) { sessionsOpacity = 0 }
         }
-        // Drop the page after the fade, like the stat page, so it stops rebuilding on session ticks.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            if !showSessions { sessionsMounted = false }
-        }
+        // The closed page stays mounted (hidden, no hit testing), like Settings: the Sessions icon
+        // click and the summary click then only fade instead of rebuilding the list.
     }
 
     private func openStat(_ topic: StatTopic) {
@@ -370,7 +398,7 @@ struct PopoverContentView: View {
         }
     }
 
-    private func closeStat() {
+    private func closeStat(animated: Bool = true) {
         resignHeaderFocus()
         appState.systemMonitor.setStatFocus(nil)
         if dashboardHeight > 1 { setVisibleHeight(dashboardHeight) }
@@ -378,6 +406,13 @@ struct PopoverContentView: View {
         layout.disablesAnimations = true
         withTransaction(layout) { showStat = false }
         noteSessionsPageVisible()
+        guard animated else {
+            withTransaction(layout) {
+                statOpacity = 0
+                statMounted = false
+            }
+            return
+        }
         DispatchQueue.main.async {
             withAnimation(SessionDashboardLayout.pageAnimation) { statOpacity = 0 }
         }
@@ -564,15 +599,22 @@ private struct DashboardView: View {
                 cursor: appState.cursorSessions,
                 codex: appState.codexSessions,
                 antigravity: appState.antigravitySessions,
-                openSessions: openSessions
+                openSessions: { openSessions() }
             )
         case .toggles:
-            HStack(spacing: MacToolsTheme.sectionSpacing) {
-                AntiSleepToggle(antiSleep: appState.antiSleep) { openAntiSleepPicker(.awake) }
-                ClosedLidToggle(antiSleep: appState.antiSleep) { openAntiSleepPicker(.lid) }
-                LowPowerToggle(battery: appState.battery)
-                VPNToggle(network: appState.network, monitor: appState.systemMonitor)
-                SpoofToggle(network: appState.network, monitor: appState.systemMonitor)
+            VStack(spacing: MacToolsTheme.sectionSpacing) {
+                HStack(spacing: MacToolsTheme.sectionSpacing) {
+                    AntiSleepToggle(antiSleep: appState.antiSleep) { openAntiSleepPicker(.awake) }
+                    ClosedLidToggle(antiSleep: appState.antiSleep) { openAntiSleepPicker(.lid) }
+                    LowPowerToggle(battery: appState.battery)
+                    VPNToggle(network: appState.network, monitor: appState.systemMonitor)
+                    SpoofToggle(network: appState.network, monitor: appState.systemMonitor)
+                }
+                HStack(spacing: MacToolsTheme.sectionSpacing) {
+                    RestToggle(restMode: appState.restMode)
+                    SleepWhenDoneToggle(afterDone: appState.afterDone)
+                    WakeWhenDoneToggle(afterDone: appState.afterDone)
+                }
             }
         case .converter:
             ConverterCard(converter: appState.converter)
@@ -913,6 +955,87 @@ private struct ClosedLidToggle: View {
             return "Closed-lid on\(guardText) · click to stop"
         }
         return antiSleep.lidError ?? "Keep running with the lid closed"
+    }
+}
+
+/// Rest mode, the same switch as the phone's Rest button: agents keep running, Low Power on, display
+/// off. The start waits a moment so the click's own mouse-up cannot wake the display and end it.
+private struct RestToggle: View {
+    @ObservedObject var restMode: RestModeManager
+
+    var body: some View {
+        QuickToggle(
+            title: restMode.isOn ? "Resting" : "Rest",
+            icon: "moon.stars",
+            color: .teal,
+            isActive: restMode.isOn,
+            help: restMode.isOn
+                ? "Rest mode on · click to end"
+                : "Screen off, agents keep running · ends on keyboard or mouse",
+            action: {
+                if restMode.isOn {
+                    restMode.stop(wakeDisplay: true)
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        MainActor.assumeIsolated { restMode.start() }
+                    }
+                }
+            }
+        )
+    }
+}
+
+/// Ends Awake and Closed-lid and sleeps the Mac once no session runs (input waits over 5 min count as done).
+private struct SleepWhenDoneToggle: View {
+    @ObservedObject var afterDone: AfterDoneManager
+
+    var body: some View {
+        QuickToggle(
+            title: title,
+            icon: "moon.zzz",
+            color: .purple,
+            isActive: afterDone.sleepArmed,
+            help: afterDone.sleepWaitsForAway
+                ? "Sessions are done · sleeps after 60 s without keyboard or mouse · click to cancel"
+                : afterDone.sleepArmed
+                ? "Sleeps when every session is done · click to cancel"
+                : "Sleep the Mac when every session is done",
+            action: { afterDone.toggleSleep() }
+        )
+    }
+
+    private var title: String {
+        guard afterDone.sleepArmed else { return "Sleep when done" }
+        if afterDone.sleepWaitsForAway { return "Sleep when away" }
+        if let left = afterDone.sleepCountdown { return "Sleep in \(left)s" }
+        return "Sleep · \(afterDone.busyText ?? "waiting")"
+    }
+}
+
+/// Rings here and on the phone (Terax) once no session runs. Click stops the alarm.
+private struct WakeWhenDoneToggle: View {
+    @ObservedObject var afterDone: AfterDoneManager
+
+    var body: some View {
+        QuickToggle(
+            title: title,
+            icon: afterDone.alarmOn ? "bell.and.waves.left.and.right" : "bell",
+            color: .pink,
+            isActive: afterDone.wakeArmed || afterDone.alarmOn,
+            help: afterDone.alarmOn
+                ? "Ringing · click to stop"
+                : afterDone.wakeArmed
+                    ? "Rings when every session is done · click to cancel"
+                    : "Ring here and on the phone when every session is done",
+            action: { afterDone.toggleWake() }
+        )
+    }
+
+    private var title: String {
+        if afterDone.alarmOn { return "Ringing · stop" }
+        guard afterDone.wakeArmed else { return "Wake me when done" }
+        if let left = afterDone.wakeCountdown { return "Ringing in \(left)s" }
+        return "Alarm · \(afterDone.busyText ?? "waiting")"
     }
 }
 

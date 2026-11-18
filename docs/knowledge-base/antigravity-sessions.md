@@ -6,7 +6,7 @@ This is separate from AI Limits and from Claude / Cursor / Codex sessions. Live 
 
 ## Where sessions live
 
-`~/.gemini/antigravity/conversation_summaries.db` (or `$ANTIGRAVITY_CONFIG_DIR/conversation_summaries.db`), table `conversation_summaries`. The query is read-only:
+`~/.gemini/antigravity/conversation_summaries.db` (or `$ANTIGRAVITY_CONFIG_DIR/conversation_summaries.db`) for the IDE, and `~/.gemini/antigravity-cli/conversation_summaries.db` for the `agy` CLI, which keeps its own folder. Both have the same table, `conversation_summaries`, and are merged. The summaries name a folder, not a process, so a conversation gets the pid of the one `agy` running in its folder (two in one folder get none), which lets Terax open its terminal from the phone; an `agy` whose conversation is at rest keeps its latest conversation listed as Idle instead of an Ended row (the finish notification still goes out); a folder without a database is skipped, and each file is re-read only when it or its WAL changed. The query is read-only:
 
 ```sql
 SELECT conversation_id, title, preview, status, not_fully_idle, killed,
@@ -37,13 +37,13 @@ On a later read, if that same row is still in the table and it is no longer live
 
 - posts a notification titled **Antigravity finished**, body `name · project`
 - adds an **Ended** row on the Antigravity card (blue, so it does not look like a chat that needs input)
-- turns the lower-left segment of the menu bar ring blue until that row is on screen
+- turns the lower-left segment of the menu bar ring blue until that row is checked
 
-Opening the panel clears the blue segment when the row is in the dashboard list. More than three rows collapse to a Sessions summary, and that summary does not count: the segment and the blue row stay until the Sessions page is opened. Ended rows you have already seen turn grey, and the word Ended stays blue. A finish you have not seen keeps the blue row, and stays at the top, until you close the panel after seeing it. The uptime slot shows when it finished: `just now`, `4m ago`, `2h ago`, `1d ago`. The first time a live conversation is waiting, MenuTools posts **Antigravity needs input** (same body) and, on that same read, turns the top segment orange while the panel stays closed. Orange stays until that conversation is no longer waiting. The id is stored in the watch file. A running conversation turns the lower-right segment green. Opening the panel does not clear orange or green. Ended rows stay until the x on the row is pressed. If the same conversation id becomes live again, its Ended row is dropped so the card is not duplicated. Antigravity not running does not count as finished: the tracked ids stay until the summaries themselves go idle.
+Opening the panel or the Sessions page checks nothing, and the Sessions summary does not check anything either. An unchecked finish keeps the blue row and the blue segment, and stays at the top, until it is checked. A row is checked by clicking it (which also raises the window), by its ✓ button, by the card header's **Mark all checked** button, or by clicking the **Antigravity finished** notification. A checked row turns grey, with a grey Ended label, and its ✕ removes it. In `antigravity-session-watch.json` the `seen` flag on an ended row means checked. The uptime slot shows when it finished: `just now`, `4m ago`, `2h ago`, `1d ago`. The first time a live conversation is waiting, MenuTools posts **Antigravity needs input** (same body) and, on that same read, turns the top segment orange while the panel stays closed. Orange stays until that conversation is no longer waiting. The id is stored in the watch file. A running conversation turns the lower-right segment green. Opening the panel does not clear orange or green. Unchecked Ended rows stay until checked and removed. If the same conversation id becomes live again, its Ended row is dropped so the card is not duplicated. Antigravity not running does not count as finished: the tracked ids stay until the summaries themselves go idle.
 
 The watch starts at launch. While Antigravity is running, or while the panel is open, the read is every 2 s (tolerance 0.5 s). Otherwise it is every 15 s.
 
-The card header uses Antigravity.app's icon when that app is installed, otherwise the `arrow.up.forward.circle` symbol. Its right side counts rows in the shared colors: green running, orange needs input, blue ended. The dashboard omits this card when there are no live or ended rows. More than three live+ended rows across all providers collapse to a Sessions summary; click it for this full list.
+The card header uses Antigravity.app's icon when that app is installed, otherwise the `arrow.up.forward.circle` symbol. Its right side counts rows in the shared colors: green running, orange needs input, blue to check (unchecked finishes only). The dashboard omits this card when there are no live or ended rows. More than three live+ended rows across all providers collapse to a Sessions summary; click it for this full list.
 
 ## Fields the card shows
 
@@ -57,8 +57,10 @@ The row shows the chat name, the status word, a project chip and uptime. A chevr
 | conversation id | Drawer |
 | `last_modified_time` | Uptime |
 
-A click raises the Antigravity window whose title belongs to that project (`file — project`), using Accessibility when it is granted, then activates the app. The chevron does not raise the window.
+A click raises the Antigravity window whose title belongs to that project (`file — project`), using Accessibility when it is granted, then activates the app, and checks an ended row. The chevron does not raise the window or check the row.
 
 ## When it runs
 
-`AppState` constructs the manager at launch. `onPopoverWillShow` only speeds the poll and marks ended rows seen. Published arrays are replaced only when they differ.
+`AppState` constructs the manager at launch. `onPopoverDidShow` (one turn after the panel is on screen) only speeds the poll. It checks nothing. Published arrays are replaced only when they differ.
+
+A conversation present in both the IDE and CLI databases is listed once (the row with a process, then the more active one). Both `live` sessions and `facts` are deduplicated so active states (running/needs-input) consistently take precedence over idle states, preventing spurious finish notifications while an `agy` CLI agent is running. Folders are compared after `resolvingSymlinksInPath().standardized`, so `/private` prefixes and symlinks still match an `agy` process. Use `--antigravity-diagnose` to inspect detected processes, databases, and deduplicated live/facts state.

@@ -154,10 +154,17 @@ final class AppState: ObservableObject {
     let cursorSessions: CursorSessionsManager
     let codexSessions: CodexSessionsManager
     let antigravitySessions: AntigravitySessionsManager
+    private let previewMode: Bool
+    lazy var restMode = RestModeManager(battery: battery, previewMode: previewMode)
+    /// Sleep when done and Wake me when done.
+    lazy var afterDone = AfterDoneManager(app: self, previewMode: previewMode)
+    private var teraxLink: TeraxLinkServer?
+    private var teraxLinkRetry: DispatchSourceTimer?
 
     private var cancellables = Set<AnyCancellable>()
 
     init(previewMode: Bool = false) {
+        self.previewMode = previewMode
         // Preview renders must never take power assertions or touch pmset.
         antiSleep = AntiSleepManager(previewMode: previewMode)
         mouse = MouseManager(previewMode: previewMode)
@@ -218,7 +225,41 @@ final class AppState: ObservableObject {
         ClipboardHUDWindowController.shared.setup(clipboardManager: clipboard)
         if !previewMode {
             systemMonitor.startHistorySampling()
+            startTeraxLink()
         }
+    }
+
+    /// Terax phone access reads sessions, stats and power state through this socket. On unless
+    /// `defaults write com.frider.MenuTools TeraxLinkEnabled -bool false`.
+    private func startTeraxLink() {
+        guard UserDefaults.standard.object(forKey: "TeraxLinkEnabled") as? Bool ?? true else { return }
+        let service = TeraxLinkService(app: self)
+        let server = TeraxLinkServer { line in await service.handle(line) }
+        if (try? server.start()) != nil {
+            teraxLink = server
+            teraxLinkRetry?.cancel()
+            teraxLinkRetry = nil
+            return
+        }
+        // Another instance holds the socket (a dev build next to the installed app): try again
+        // every 30 s until it quits, instead of staying without a link until relaunch.
+        guard teraxLinkRetry == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 30, repeating: 30, leeway: .seconds(5))
+        timer.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.startTeraxLink() }
+        }
+        timer.resume()
+        teraxLinkRetry = timer
+    }
+
+    /// Synchronous, for app termination.
+    func stopTeraxLink() {
+        teraxLink?.stop()
+        teraxLink = nil
+        teraxLinkRetry?.cancel()
+        teraxLinkRetry = nil
+        restMode.prepareForTermination()
     }
 
     func toggleLaunchAtLogin() {
@@ -251,6 +292,11 @@ final class AppState: ObservableObject {
     /// True while the Sessions page is the page on screen. The dashboard summary is not.
     var sessionsPageVisible = false
 
+    enum PanelPage { case dashboard, sessions }
+    /// Which page the panel should show, sent by the status item that was clicked (the Sessions
+    /// item opens Sessions, the main icon the dashboard). The panel view listens; nothing observes.
+    let panelPageRequests = PassthroughSubject<PanelPage, Never>()
+
     /// Live + ended rows across the four providers. Above this, the dashboard shows a summary.
     var sessionRowCount: Int {
         claudeSessions.sessions.count + cursorSessions.sessions.count + cursorSessions.ended.count
@@ -258,17 +304,11 @@ final class AppState: ObservableObject {
             + antigravitySessions.ended.count
     }
 
-    /// Ended rows are actually listed: inline on the dashboard, or on the Sessions page.
-    var endedRowsAreVisible: Bool {
-        sessionsPageVisible || sessionRowCount <= SessionDashboardLayout.maxInlineRows
-    }
-
-    /// Clear the menu-bar blue for ended rows the user can see. The blue row lasts until the panel closes.
-    func acknowledgeEndedSessions() {
-        claudeSessions.acknowledgeFinished()
-        cursorSessions.acknowledgeEnded()
-        codexSessions.acknowledgeEnded()
-        antigravitySessions.acknowledgeEnded()
+    /// Terax focused the pane whose shell is `shell`: finished sessions under it count as checked.
+    /// Opening the panel never checks anything; only explicit actions do.
+    @discardableResult
+    func checkSessions(underShell shell: pid_t) -> Int {
+        claudeSessions.check(underShell: shell)
     }
 
     /// Menu bar ring. A session that is waiting counts as input, not also as running.
@@ -300,20 +340,27 @@ final class AppState: ObservableObject {
         return marks
     }
 
+    /// Before the first layout: only what the first frame needs and what is cheap (under 2 ms).
     func onPopoverWillShow() {
         systemMonitor.startMonitoring()
         network.startPolling()
-        fanControl.startMonitoring()
         battery.refreshBatteryState()
-        windowManager.refreshPermissions()
-        mouse.refreshPermissions()
-        aiLimits.startMonitoring()
-        claudeSessions.startMonitoring()
-        cursorSessions.startMonitoring()
-        codexSessions.startMonitoring()
-        antigravitySessions.startMonitoring()
-        // A Sessions summary hides the rows, so opening the panel is not the same as seeing them.
-        if endedRowsAreVisible { acknowledgeEndedSessions() }
+    }
+
+    /// After the window is on screen: the session scans, SMC and permission reads (20–70 ms together)
+    /// would otherwise sit between the click and the first frame. Rows are at most one background
+    /// tick old at that point; a new one grows the panel from its bottom edge a frame later.
+    func onPopoverDidShow() {
+        func t(_ label: String, _ body: () -> Void) { PanelOpenDiagnose.measure(label, body) }
+        t("fan") { fanControl.startMonitoring() }
+        t("window") { windowManager.refreshPermissions() }
+        t("mouse") { mouse.refreshPermissions() }
+        t("limits") { aiLimits.startMonitoring() }
+        t("claude") { claudeSessions.startMonitoring() }
+        t("cursor") { cursorSessions.startMonitoring() }
+        t("codex") { codexSessions.startMonitoring() }
+        t("antigravity") { antigravitySessions.startMonitoring() }
+        afterDone.panelOpened()
     }
 
     func onPopoverDidClose() {

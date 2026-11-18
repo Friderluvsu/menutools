@@ -11,6 +11,8 @@ struct AntigravitySession: Identifiable, Equatable, Sendable {
     let status: String
     let waitingFor: String?
     let startedAt: Date?
+    /// The `agy` process of this conversation, when one runs in its folder. Nil for the IDE.
+    var pid: pid_t? = nil
 
     var needsInput: Bool { waitingFor != nil }
 
@@ -89,49 +91,176 @@ struct AntigravityFact: Equatable, Codable, Sendable {
 }
 
 enum AntigravitySessionFiles {
-    static var databaseURL: URL {
-        let root =
+    /// The IDE and the `agy` CLI keep separate folders with the same `conversation_summaries.db`.
+    static var databaseURLs: [URL] {
+        let gemini = (NSHomeDirectory() as NSString).appendingPathComponent(".gemini")
+        let ide =
             ProcessInfo.processInfo.environment["ANTIGRAVITY_CONFIG_DIR"]
-            ?? (NSHomeDirectory() as NSString).appendingPathComponent(".gemini/antigravity")
-        return URL(fileURLWithPath: root, isDirectory: true).appendingPathComponent("conversation_summaries.db")
+            ?? (gemini as NSString).appendingPathComponent("antigravity")
+        let cli = (gemini as NSString).appendingPathComponent("antigravity-cli")
+        return [ide, cli].map {
+            URL(fileURLWithPath: $0, isDirectory: true).appendingPathComponent("conversation_summaries.db")
+        }
     }
 
-    /// `live` and `facts` are nil when the database could not be read. An empty list means the read succeeded and nothing is live.
+    /// `live` and `facts` are nil when a database could not be read. An empty list means the read succeeded and nothing is live.
     static func scan() -> (appRunning: Bool, live: [AntigravitySession]?, facts: [AntigravityFact]?) {
         let running = ProcessLookup.isLiveAntigravity()
         guard running else {
-            lastScan = nil
+            lastScans = [:]
             return (false, [], [])
         }
-        // The result depends only on the database. `instr(raw_summary, …)` reads every summary blob,
-        // so an unchanged file (and WAL) reuses the last good read.
-        let signature = fileSignature()
-        if let lastScan, let signature, lastScan.signature == signature {
-            return (true, lastScan.live, lastScan.facts)
-        }
-        let db = AntigravitySummaryDB()
-        guard db.open() else { return (true, nil, nil) }
-        defer { db.close() }
-        guard let rows = db.rows() else { return (true, nil, nil) }
         var live: [AntigravitySession] = []
+        var idle: [AntigravitySession] = []
         var facts: [AntigravityFact] = []
-        for row in rows {
-            facts.append(row.fact)
-            if let session = row.session { live.append(session) }
+        var found = false
+        for url in databaseURLs {
+            // A folder that was never used has no database; that is not a failed read.
+            guard let signature = fileSignature(url.path) else {
+                lastScans[url.path] = nil
+                continue
+            }
+            found = true
+            guard let read = read(url, signature: signature) else { return (true, nil, nil) }
+            live += read.live
+            idle += read.idle
+            facts += read.facts
         }
+        guard found else { return (true, nil, nil) }
+        live = dedup(attachProcesses(live, idle: idle))
         live.sort { lhs, rhs in
             if lhs.needsInput != rhs.needsInput { return lhs.needsInput }
             return (lhs.startedAt ?? .distantPast) > (rhs.startedAt ?? .distantPast)
         }
-        lastScan = signature.map { (signature: $0, live: live, facts: facts) }
+        facts = dedupFacts(facts)
         return (true, live, facts)
     }
 
-    private static var lastScan: (signature: [Double], live: [AntigravitySession], facts: [AntigravityFact])?
+    /// When the same conversation exists in multiple databases (e.g. IDE and agy CLI),
+    /// keep the more active state (running beats idle), matching `dedup` for live sessions.
+    private static func dedupFacts(_ facts: [AntigravityFact]) -> [AntigravityFact] {
+        var best: [String: AntigravityFact] = [:]
+        var order: [String] = []
+        for fact in facts {
+            if let current = best[fact.id] {
+                let preferNew: Bool
+                if fact.running != current.running {
+                    preferNew = fact.running
+                } else {
+                    let newScore = (fact.name.isEmpty ? 0 : 1) + (fact.cwd.isEmpty ? 0 : 1) + (fact.subtitle.isEmpty ? 0 : 1)
+                    let curScore = (current.name.isEmpty ? 0 : 1) + (current.cwd.isEmpty ? 0 : 1) + (current.subtitle.isEmpty ? 0 : 1)
+                    preferNew = newScore > curScore
+                }
+                if preferNew { best[fact.id] = fact }
+            } else {
+                best[fact.id] = fact
+                order.append(fact.id)
+            }
+        }
+        return order.compactMap { best[$0] }
+    }
+
+    /// One conversation can sit in both databases: keep the row with a process, else the more active one.
+    private static func dedup(_ sessions: [AntigravitySession]) -> [AntigravitySession] {
+        func rank(_ session: AntigravitySession) -> Int {
+            (session.pid != nil ? 4 : 0) + (session.needsInput ? 2 : 0) + (session.status != "idle" ? 1 : 0)
+        }
+        var best: [String: AntigravitySession] = [:]
+        var order: [String] = []
+        for session in sessions {
+            if let current = best[session.id] {
+                if rank(session) > rank(current) { best[session.id] = session }
+            } else {
+                best[session.id] = session
+                order.append(session.id)
+            }
+        }
+        return order.compactMap { best[$0] }
+    }
+
+    private static func normalized(_ path: String) -> String {
+        guard !path.isEmpty else { return "" }
+        return URL(fileURLWithPath: path).resolvingSymlinksInPath().standardized.path
+    }
+
+    /// The summaries name a folder, not a process, so a CLI conversation gets the `agy` running in
+    /// that folder. Two in one folder cannot be told apart, so neither gets one. An `agy` whose
+    /// conversation is at rest keeps its latest conversation listed as idle, so it stays reachable.
+    private static func attachProcesses(
+        _ sessions: [AntigravitySession], idle: [AntigravitySession]
+    ) -> [AntigravitySession] {
+        let pids = ProcessLookup.liveAgyPids()
+        guard !pids.isEmpty else { return sessions }
+        var byFolder: [String: [pid_t]] = [:]
+        for pid in pids {
+            guard let cwd = ProcessLookup.workingDirectory(pid) else { continue }
+            byFolder[normalized(cwd), default: []].append(pid)
+        }
+        var result = sessions.map { session in
+            var session = session
+            if let found = byFolder[normalized(session.cwd)], found.count == 1 { session.pid = found[0] }
+            return session
+        }
+        let busyFolders = Set(sessions.map { normalized($0.cwd) })
+        for (folder, found) in byFolder where found.count == 1 && !busyFolders.contains(folder) {
+            let latest = idle.filter { normalized($0.cwd) == folder }
+                .max { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
+            guard var session = latest else { continue }
+            session.pid = found[0]
+            result.append(session)
+        }
+        return result
+    }
+
+    /// The result depends only on the database. `instr(raw_summary, …)` reads every summary blob,
+    /// so an unchanged file (and WAL) reuses the last good read.
+    private static func read(
+        _ url: URL, signature: [Double]
+    ) -> (live: [AntigravitySession], idle: [AntigravitySession], facts: [AntigravityFact])? {
+        if let last = lastScans[url.path], last.signature == signature {
+            return (last.live, last.idle, last.facts)
+        }
+        let db = AntigravitySummaryDB(path: url.path)
+        guard db.open() else { return nil }
+        defer { db.close() }
+        guard let rows = db.rows() else { return nil }
+        let live = rows.compactMap(\.session)
+        let idle = rows.compactMap(\.idle)
+        let facts = rows.map(\.fact)
+        lastScans[url.path] = (signature: signature, live: live, idle: idle, facts: facts)
+        return (live, idle, facts)
+    }
+
+    private static var lastScans:
+        [String: (
+            signature: [Double], live: [AntigravitySession], idle: [AntigravitySession], facts: [AntigravityFact]
+        )] = [:]
+
+    @MainActor
+    static func diagnose() -> [String] {
+        var lines: [String] = []
+        lines.append("isLiveAntigravity: \(ProcessLookup.isLiveAntigravity())")
+        lines.append("liveAgyPids: \(ProcessLookup.liveAgyPids())")
+        for url in databaseURLs {
+            lines.append("db: \(url.path) exists: \(FileManager.default.fileExists(atPath: url.path))")
+        }
+        let result = scan()
+        lines.append("scan: appRunning=\(result.appRunning) live=\(result.live?.count ?? -1) facts=\(result.facts?.count ?? -1)")
+        if let live = result.live {
+            for s in live {
+                lines.append("  live: id=\(s.id) name=\(s.name) status=\(s.status) needsInput=\(s.needsInput) pid=\(s.pid?.description ?? "nil")")
+            }
+        }
+        if let facts = result.facts {
+            for f in facts {
+                lines.append("  fact: id=\(f.id) name=\(f.name) running=\(f.running)")
+            }
+        }
+        return lines
+    }
 
     /// Modification time and size of the database and its WAL. nil when the database is missing.
-    private static func fileSignature() -> [Double]? {
-        let path = databaseURL.path
+    private static func fileSignature(_ path: String) -> [Double]? {
         var result: [Double] = []
         for (index, file) in [path, path + "-wal"].enumerated() {
             var info = stat()
@@ -149,15 +278,21 @@ enum AntigravitySessionFiles {
 
 private struct AntigravityRow {
     var session: AntigravitySession?
+    /// The same conversation at rest, for an `agy` still open on it.
+    var idle: AntigravitySession?
     var fact: AntigravityFact
 }
 
 private final class AntigravitySummaryDB {
+    private let path: String
     private var db: OpaquePointer?
+
+    init(path: String) {
+        self.path = path
+    }
 
     func open() -> Bool {
         if db != nil { return true }
-        let path = AntigravitySessionFiles.databaseURL.path
         guard FileManager.default.fileExists(atPath: path) else { return false }
         var handle: OpaquePointer?
         // A read-only connection cannot open the WAL this file uses while the IDE holds it:
@@ -212,15 +347,14 @@ private final class AntigravitySummaryDB {
                 id: id, name: display, project: project.isEmpty ? "—" : project, cwd: cwd,
                 subtitle: preview, running: interpreted.live
             )
-            var session: AntigravitySession?
-            if interpreted.live {
-                session = AntigravitySession(
-                    id: id, name: display, project: fact.project, cwd: cwd, subtitle: preview,
-                    status: interpreted.running ? "running" : "waiting",
-                    waitingFor: interpreted.waitingFor, startedAt: modified
-                )
-            }
-            result.append(AntigravityRow(session: session, fact: fact))
+            let session = AntigravitySession(
+                id: id, name: display, project: fact.project, cwd: cwd, subtitle: preview,
+                status: interpreted.live ? (interpreted.running ? "running" : "waiting") : "idle",
+                waitingFor: interpreted.waitingFor, startedAt: modified
+            )
+            result.append(
+                AntigravityRow(
+                    session: interpreted.live ? session : nil, idle: interpreted.live ? nil : session, fact: fact))
         }
         return result
     }

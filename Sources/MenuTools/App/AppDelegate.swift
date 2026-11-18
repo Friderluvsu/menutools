@@ -22,7 +22,7 @@ private final class ZeroBlinkStatusBarButton: NSStatusBarButton {
 
     override func mouseDown(with event: NSEvent) {
         // DO NOT call super.mouseDown(with: event)!
-        AppDelegate.sharedInstance?.statusButtonMouseDown()
+        AppDelegate.sharedInstance?.statusButtonMouseDown(self)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -31,7 +31,7 @@ private final class ZeroBlinkStatusBarButton: NSStatusBarButton {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        AppDelegate.sharedInstance?.statusButtonMouseDown()
+        AppDelegate.sharedInstance?.statusButtonMouseDown(self)
     }
 
     override func rightMouseUp(with event: NSEvent) {
@@ -54,11 +54,11 @@ private final class ZeroBlinkStatusBarButton: NSStatusBarButton {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        AppDelegate.sharedInstance?.statusButtonHover(true)
+        AppDelegate.sharedInstance?.statusButtonHover(true, button: self)
     }
 
     override func mouseExited(with event: NSEvent) {
-        AppDelegate.sharedInstance?.statusButtonHover(false)
+        AppDelegate.sharedInstance?.statusButtonHover(false, button: self)
     }
 
     /// Keeps the live status lights over the image slot (left of any title).
@@ -74,7 +74,7 @@ private final class ZeroBlinkStatusBarButton: NSStatusBarButton {
 
     // Spring-loaded: dragging files over the icon opens the panel; the drop itself happens inside the panel.
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        AppDelegate.sharedInstance?.statusButtonDragEntered()
+        AppDelegate.sharedInstance?.statusButtonDragEntered(self)
         return []
     }
 
@@ -127,6 +127,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static private(set) var sharedInstance: AppDelegate?
 
     private var statusItem: NSStatusItem!
+    /// Settings → General → Status lights → "Own icon": the lights on a second item whose click
+    /// opens the Sessions page. Nil while off. The main item then keeps the static icon.
+    private var sessionsItem: NSStatusItem?
+    /// The item the open panel hangs under.
+    private var panelAnchor: NSStatusItem?
     private var panel: MenuToolsPanel?
     private var resignObserver: NSObjectProtocol?
     private var outsideClickMonitor: Any?
@@ -159,8 +164,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// True between showPanel and hidePanel, even if AppKit ordered the window out on its own.
     private var isPanelOpen = false
     private var panelClosedAt: TimeInterval = 0
+    /// Counts opens, so a deferred post-open refresh runs only for the open that scheduled it.
+    private var panelOpenToken = 0
     /// Natural content height reported by SwiftUI; the panel fits it exactly (no scrolling).
     private var panelContentHeight: CGFloat = MacToolsTheme.popoverHeight
+    /// Last measured height of the page each status item opens (true: Sessions). The hidden panel is
+    /// sized to it before the layout, so a page switch lays the SwiftUI tree out once, not twice.
+    private var requestedPageHeights: [Bool: CGFloat] = [:]
     /// Screen Y of the panel's top edge, captured when the panel is shown. Height changes
     /// keep this value so the window never slides toward the menu bar.
     private var anchoredPanelTop: CGFloat?
@@ -182,9 +192,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             reason: "Menu bar session status")
 
         self.appState = AppState()
+        SessionNotificationRouter.install(app: appState)
 
         setupStatusItem()
-        // The panel (and its SwiftUI graph) is built on first open; idle memory stays low.
         setupGlobalHotkeys()
         setupTerminationSignal()
         ShelfManager.shared.start()
@@ -198,7 +208,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [weak self] in
                 self?.showPanel()
             }
+        } else {
+            // Build the panel hidden once launch has settled, so the first click is as quick as
+            // the rest (building the graph on the click took 0.3–1 s). Costs about 20 MB idle.
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.panelPrebuildDelay) { [weak self] in
+                self?.prebuildPanel()
+            }
+            if PanelOpenDiagnose.enabled { PanelOpenDiagnose.run(delegate: self) }
         }
+    }
+
+    private static let panelPrebuildDelay: TimeInterval = 4
+
+    private func prebuildPanel() {
+        guard panel == nil else { return }
+        PanelOpenDiagnose.begin()
+        PanelOpenDiagnose.measure("setup") { setupPanel() }
+        PanelOpenDiagnose.measure("layout") { panel?.contentView?.layoutSubtreeIfNeeded() }
+        PanelOpenDiagnose.end("prebuild")
     }
 
     /// `killall` / logout send SIGTERM, which skips applicationWillTerminate: route it through
@@ -217,18 +244,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem.button {
-            object_setClass(button, ZeroBlinkStatusBarButton.self)
-            (button.cell as? NSButtonCell)?.highlightsBy = []
-            (button.cell as? NSButtonCell)?.showsStateBy = []
-            button.highlight(false)
+            makeStatusButton(button)
             statusLights = StatusLightsAnimator(
                 button: button,
                 isDark: { NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua })
             updateStatusItemIcon()
-            button.imagePosition = .imageLeft
-            button.action = #selector(togglePanel(_:))
-            button.target = self
-            button.registerForDraggedTypes([.fileURL])
         }
 
         // Event-driven: battery / anti-sleep / network changes arrive via AppState, theme changes via KVO.
@@ -271,6 +291,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] enabled in self?.statusLightsToggled(enabled) }
             .store(in: &cancellables)
+        StatusLightSettings.shared.$separateItem
+            .dropFirst()
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.syncSessionsItem() }
+            .store(in: &cancellables)
+        syncSessionsItem()
 
         sessionMarksObserver = NotificationCenter.default.addObserver(
             forName: .sessionMenuMarksChanged, object: nil, queue: .main
@@ -282,7 +309,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func setupPanel() {
+    /// The button that carries the lights: the Sessions item while it exists, else the main one.
+    private var lightsButton: NSStatusBarButton? { sessionsItem?.button ?? statusItem.button }
+
+    private func makeStatusButton(_ button: NSStatusBarButton) {
+        object_setClass(button, ZeroBlinkStatusBarButton.self)
+        (button.cell as? NSButtonCell)?.highlightsBy = []
+        (button.cell as? NSButtonCell)?.showsStateBy = []
+        button.highlight(false)
+        button.imagePosition = .imageLeft
+        button.action = #selector(togglePanel(_:))
+        button.target = self
+        button.registerForDraggedTypes([.fileURL])
+    }
+
+    /// Adds or removes the Sessions item and moves the lights to the button that should carry them.
+    private func syncSessionsItem() {
+        let settings = StatusLightSettings.shared
+        let wanted = settings.enabled && settings.separateItem
+        guard wanted != (sessionsItem != nil) else { return }
+        if wanted {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            guard let button = item.button else { return }
+            makeStatusButton(button)
+            sessionsItem = item
+        } else if let item = sessionsItem {
+            if panelAnchor === item { hidePanel() }
+            NSStatusBar.system.removeStatusItem(item)
+            sessionsItem = nil
+        }
+        sessionPeek.hide()
+        statusLights?.detach()
+        if let button = lightsButton {
+            statusLights = StatusLightsAnimator(
+                button: button,
+                isDark: { NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua })
+            statusLights?.setActive(settings.enabled)
+        }
+        // Both buttons repaint: the main one changes between the lights and the static icon.
+        currentIconStyle = nil
+        lastMarkCounts = nil
+        lastSessionAlert = false
+        lastDarkMode = nil
+        lastBatteryPercentage = -1
+        statusItem.button?.toolTip = nil
+        statusItem.button?.image = nil
+        updateStatusItemIcon()
+        if settings.enabled { statusLights?.playOpen() }
+    }
+
+    private func setupPanel(showSessions: Bool = false) {
         let panel = MenuToolsPanel(
             contentRect: NSRect(x: 0, y: 0, width: MacToolsTheme.popoverWidth, height: MacToolsTheme.popoverHeight),
             styleMask: [.borderless],
@@ -312,6 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hostingView = PanelHostingView(
             rootView: PopoverContentView(
                 appState: self.appState,
+                showSessions: showSessions,
                 showStat: launchStat,
                 onHeightChange: { [weak self] height in self?.panelContentHeightChanged(height) }
             )
@@ -352,7 +429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updatePanelPosition() {
         guard let panel = panel,
-              let button = statusItem?.button,
+              let button = (panelAnchor ?? statusItem)?.button,
               let window = button.window else { return }
 
         let buttonFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
@@ -392,17 +469,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Hover peek: a session card under the icon while the pointer rests on it (lights on, panel closed).
-    func statusButtonHover(_ inside: Bool) {
-        guard let button = statusItem.button else { return }
+    func statusButtonHover(_ inside: Bool, button: NSStatusBarButton) {
+        // The peek belongs to the lights; the plain icon beside a Sessions item has none.
+        guard let lights = lightsButton, button === lights else { return }
         let wanted =
             inside && !isPanelOpen && StatusLightSettings.shared.enabled && StatusLightSettings.shared.hoverPeek
         sessionPeek.hover(wanted, button: button) { [weak self] in self?.appState?.sessionPeek ?? [] }
     }
 
-    func statusButtonMouseDown() {
+    func statusButtonMouseDown(_ button: NSStatusBarButton) {
         sessionPeek.hide()
         isMouseDownOnButton = true
-        togglePanel(nil)
+        togglePanel(from: item(of: button))
+    }
+
+    private func item(of button: NSStatusBarButton) -> NSStatusItem {
+        if let sessionsItem, sessionsItem.button === button { return sessionsItem }
+        return statusItem
     }
 
     func statusButtonMouseUp() {
@@ -410,37 +493,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func isClickOnStatusButton(mouseLocation: NSPoint) -> Bool {
-        guard let button = statusItem?.button,
-              let window = button.window else {
-            return false
+        for item in [statusItem, sessionsItem] {
+            guard let button = item?.button, let window = button.window else { continue }
+            let buttonScreenRect = window.convertToScreen(button.convert(button.bounds, to: nil))
+            let windowScreenRect = window.frame
+            let targetRect = buttonScreenRect.union(windowScreenRect).insetBy(dx: -8, dy: -8)
+            if targetRect.contains(mouseLocation) { return true }
         }
-        let buttonScreenRect = window.convertToScreen(button.convert(button.bounds, to: nil))
-        let windowScreenRect = window.frame
-        let targetRect = buttonScreenRect.union(windowScreenRect).insetBy(dx: -8, dy: -8)
-        return targetRect.contains(mouseLocation)
+        return false
     }
 
     /// `activate: false` shows the panel without taking focus, so an in-flight drag session is not disturbed.
-    func showPanel(activate: Bool = true) {
+    /// `anchor` is the item the panel opens under; the Sessions item opens the Sessions page, the
+    /// main icon the dashboard.
+    func showPanel(activate: Bool = true, anchor: NSStatusItem? = nil) {
+        PanelOpenDiagnose.begin()
         sessionPeek.hide()
-        // Scan before the first layout so a live session is in the tree when the height is measured.
-        appState?.onPopoverWillShow()
+        PanelOpenDiagnose.measure("willShow") { appState?.onPopoverWillShow() }
+        let anchor = anchor ?? statusItem!
+        let sessions = sessionsItem != nil && anchor === sessionsItem
+        panelAnchor = anchor
         if panel == nil {
-            setupPanel()
+            PanelOpenDiagnose.measure("setup") { setupPanel(showSessions: sessions) }
+        } else if sessionsItem != nil {
+            // Before the layout below, so the height measured is the requested page's.
+            PanelOpenDiagnose.measure("page") { appState?.panelPageRequests.send(sessions ? .sessions : .dashboard) }
+            if let height = requestedPageHeights[sessions], abs(height - panelContentHeight) >= 0.5 {
+                panelContentHeight = height
+                anchoredPanelTop = nil
+                PanelOpenDiagnose.measure("presize") { updatePanelPosition() }
+            }
         }
         anchoredPanelTop = nil
-        panel?.contentView?.layoutSubtreeIfNeeded()
-        updatePanelPosition()
+        PanelOpenDiagnose.measure("layout") { panel?.contentView?.layoutSubtreeIfNeeded() }
+        if sessionsItem != nil { requestedPageHeights[sessions] = panelContentHeight }
+        PanelOpenDiagnose.measure("position") { updatePanelPosition() }
         panelShownAt = ProcessInfo.processInfo.systemUptime
         isPanelOpen = true
-        if sessionRingEnabled { statusLights?.playOpen() }
-        if activate {
-            panel?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        } else {
-            panel?.orderFrontRegardless()
+        // With an own Sessions icon, only its click plays the lights' open motion.
+        if sessionRingEnabled, sessionsItem == nil || sessions {
+            PanelOpenDiagnose.measure("lights") { statusLights?.playOpen() }
         }
+        // On screen this turn, under 1 ms. Becoming key re-lays out the SwiftUI tree (60–90 ms with
+        // the dashboard showing), so that and the scans follow once this turn's frame is committed.
+        PanelOpenDiagnose.measure("order") { panel?.orderFrontRegardless() }
         startOutsideClickMonitor()
+        PanelOpenDiagnose.markFrame("first")
+        PanelOpenDiagnose.end("open")
+        panelOpenToken += 1
+        let token = panelOpenToken
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isPanelOpen, token == self.panelOpenToken else { return }
+            PanelOpenDiagnose.begin()
+            if activate {
+                PanelOpenDiagnose.measure("key") {
+                    self.panel?.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
+            PanelOpenDiagnose.measure("didShow") { self.appState?.onPopoverDidShow() }
+            PanelOpenDiagnose.end("after")
+        }
     }
 
     /// After a drop from Finder the panel is visible but not key: take focus so Esc and clicks work.
@@ -461,14 +574,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showPanel()
     }
 
-    func statusButtonDragEntered() {
+    func statusButtonDragEntered(_ button: NSStatusBarButton) {
         guard panel?.isVisible != true else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard now - panelClosedAt >= 0.15 else { return }
-        showPanel(activate: false)
+        showPanel(activate: false, anchor: item(of: button))
     }
 
     var appStateForDiagnose: AppState? { appState }
+    var sessionsItemForDiagnose: NSStatusItem? { sessionsItem }
+    var panelForDiagnose: NSPanel? { panel }
 
     func hidePanel() {
         guard let panel = panel, isPanelOpen || panel.isVisible else { return }
@@ -482,15 +597,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func togglePanel(_ sender: AnyObject?) {
+        let item = (sender as? NSStatusBarButton).map(item(of:)) ?? statusItem!
+        togglePanel(from: item)
+    }
+
+    /// A click on the item the panel hangs under closes it; a click on the other item moves the
+    /// panel there and shows that item's page.
+    func togglePanel(from item: NSStatusItem) {
         let now = ProcessInfo.processInfo.systemUptime
         if panel?.isVisible == true {
+            let other = panelAnchor != nil && panelAnchor !== item
             hidePanel()
+            if other { showPanel(anchor: item) }
             return
         }
         if now - panelClosedAt < 0.15 {
             return
         }
-        showPanel()
+        showPanel(anchor: item)
     }
 
     private func shouldIgnoreOutsideEvent() -> Bool {
@@ -576,9 +700,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusItemIcon() {
-        guard let button = statusItem.button, let state = appState else { return }
+        guard let button = lightsButton, let state = appState else { return }
         if sessionRingEnabled {
             updateSessionRingIcon(button: button, state: state)
+            // The Sessions item carries the lights; the main icon stays static, with no alert dot.
+            if sessionsItem != nil { updateLegacyStatusItemIcon(alertDot: false) }
             return
         }
         updateLegacyStatusItemIcon()
@@ -587,6 +713,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Switching between the colour lights and the static icon. Both paths cache what they drew last,
     /// so the caches are cleared to force a repaint.
     private func statusLightsToggled(_ enabled: Bool) {
+        if StatusLightSettings.shared.separateItem {
+            // Lights off removes the Sessions item (it rebuilds the lights and repaints); on adds it.
+            syncSessionsItem()
+            if sessionsItem != nil { return }
+        }
         currentIconStyle = nil
         lastMarkCounts = nil
         lastSessionAlert = false
@@ -613,7 +744,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Battery bars and symbol styles. Used while `sessionRingEnabled` is false.
-    private func updateLegacyStatusItemIcon() {
+    private func updateLegacyStatusItemIcon(alertDot: Bool = true) {
         guard let button = statusItem.button, let state = appState else { return }
         let style = state.menuBarIconStyle
 
@@ -625,7 +756,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let hasBattery = state.battery.hasBattery
             // The menu bar follows the system appearance; the status button itself can report .aqua over a dark bar.
         let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let alert = state.hasSessionAlert
+        let alert = alertDot && state.hasSessionAlert
 
         if currentIconStyle != style
             || lastBatteryPercentage != pct
@@ -727,7 +858,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 lastSessionAlert = alert
             }
         } else {
-            let alert = state.hasSessionAlert
+            let alert = alertDot && state.hasSessionAlert
             let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             guard currentIconStyle != style || lastSessionAlert != alert || lastDarkMode != isDarkMode else { return }
             let config = NSImage.SymbolConfiguration(pointSize: 13.5, weight: .semibold)
@@ -813,5 +944,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Synchronous: the process exits right after this returns, so no Task would ever run.
         appState?.antiSleep.prepareForTermination()
         appState?.mouse.prepareForTermination()
+        appState?.stopTeraxLink()
     }
 }

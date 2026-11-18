@@ -225,9 +225,10 @@ final class BatteryManager: ObservableObject {
         setLowPowerMode(enabled: target)
     }
 
-    func setLowPowerMode(enabled: Bool) {
+    /// `allowPrompt` false for changes made with nobody at the Mac (Rest mode, the phone).
+    func setLowPowerMode(enabled: Bool, allowPrompt: Bool = true) {
         Task { [weak self] in
-            let success = await SMCHelperManager.shared.setLowPowerMode(enabled: enabled)
+            let success = await SMCHelperManager.shared.setLowPowerMode(enabled: enabled, allowPrompt: allowPrompt)
             guard let self = self else { return }
             if success {
                 if self.isLowPowerMode != enabled { self.isLowPowerMode = enabled }

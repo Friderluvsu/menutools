@@ -100,6 +100,8 @@ final class FanControlManager: ObservableObject {
     /// Unrounded sensor reading used by the curve; `currentSensorTemp` is published only on visible change.
     private var rawSensorTemp: Double = 45.0
     private var lastAppliedRPM: Int = -1
+    private var readInFlight = false
+    private static let readQueue = DispatchQueue(label: "MenuTools.FanRead", qos: .userInitiated)
     private let smc = SMCDriver.shared
     private let helper = SMCHelperManager.shared
 
@@ -224,12 +226,31 @@ final class FanControlManager: ObservableObject {
             return
         }
 
-        let actual = smc.readFanActualRPM(0)
+        // SMC reads share one lock with the temperature sampler, which can hold it for tens of
+        // milliseconds; on the main thread that wait landed on the panel's first frame.
+        guard !readInFlight else { return }
+        readInFlight = true
+        let smc = smc
+        let sensor = selectedSensor
+        Self.readQueue.async {
+            let actual = smc.readFanActualRPM(0)
+            let temperature = smc.readTemperature(for: sensor)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in
+                    self?.applyReading(actual: actual, temperature: temperature)
+                }
+            }
+        }
+    }
+
+    private func applyReading(actual: Int, temperature: Double) {
+        readInFlight = false
+        guard hasFans else { return }
         if actual > 0, currentRPM != actual {
             currentRPM = actual
         }
 
-        rawSensorTemp = smc.readTemperature(for: selectedSensor)
+        rawSensorTemp = temperature
         if abs(currentSensorTemp - rawSensorTemp) >= 0.5 {
             currentSensorTemp = rawSensorTemp
         }

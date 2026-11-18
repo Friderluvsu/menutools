@@ -7,22 +7,15 @@ import UserNotifications
 @MainActor
 final class ClaudeSessionsManager: ObservableObject {
     @Published private(set) var sessions: [ClaudeSession] = []
-    /// Live sessions whose last run finished (Running → Idle), keyed by session id (pid).
-    /// Cleared when that session starts working again or its process exits.
+    /// Live sessions whose last run finished (Running → Idle) and that are not checked yet, keyed by
+    /// session id (pid). Cleared when the row is checked, the session starts working again or its
+    /// process exits.
     @Published private(set) var finished: [String: ClaudeFinish] = [:]
-    /// Finished ids that were unseen when this panel open started. They stay blue until the panel closes.
-    @Published private(set) var freshFinished: Set<String> = []
     /// Tokens and estimated cost per live session (keyed by pid), summed from its transcript on
     /// background ticks. Empty until the first background read.
     @Published private(set) var usage: [String: SessionUsage] = [:]
 
-    var hasUnseenFinished: Bool { finished.values.contains { !$0.seen } }
-
-    /// Blue on the row: not seen yet, or seen during this panel visit.
-    func isFreshFinish(_ id: String) -> Bool {
-        guard let finish = finished[id] else { return false }
-        return !finish.seen || freshFinished.contains(id)
-    }
+    var hasUnseenFinished: Bool { !finished.isEmpty }
 
     private let previewMode: Bool
     private var timer: Timer?
@@ -44,6 +37,8 @@ final class ClaudeSessionsManager: ObservableObject {
     private var restoredRuns: Set<String> = []
     private var loading = false
     private var refreshAgain = false
+    /// Bumped by every synchronous load, so an older background load that lands later is dropped.
+    private var loadGeneration = 0
     private var usageLoading = false
 
     /// A run shorter than this finishing is not announced (quick replies).
@@ -72,8 +67,12 @@ final class ClaudeSessionsManager: ObservableObject {
     func startMonitoring() {
         guard !previewMode else { return }
         panelOpen = true
-        let fresh = Set(finished.filter { !$0.value.seen }.map(\.key))
-        if fresh != freshFinished { freshFinished = fresh }
+        refresh()
+    }
+
+    /// Re-reads the session files now, for a Terax refresh. Changes nothing the panel shows as seen.
+    func refreshNow() {
+        guard !previewMode else { return }
         refresh()
     }
 
@@ -81,29 +80,52 @@ final class ClaudeSessionsManager: ObservableObject {
     func stopMonitoring() {
         guard !previewMode else { return }
         panelOpen = false
-        if !freshFinished.isEmpty { freshFinished = [] }
         reschedule()
     }
 
-    /// The finished rows are on screen. Clears the menu-bar blue; rows stay blue until the panel closes.
-    func acknowledgeFinished() {
-        guard !previewMode, hasUnseenFinished else { return }
-        freshFinished.formUnion(finished.filter { !$0.value.seen }.map(\.key))
-        for key in finished.keys { finished[key]?.seen = true }
+    /// The user dealt with this finish (row click, its ✓, its notification, its Terax pane focused).
+    /// The row goes back to Idle and folds away with the other quiet rows.
+    func check(_ id: String) {
+        guard !previewMode, finished.removeValue(forKey: id) != nil else { return }
         saveInputWatch()
         NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
     }
 
-    /// Brings forward the terminal (or other app) that owns this Claude process.
+    func checkAll() {
+        guard !previewMode, !finished.isEmpty else { return }
+        finished = [:]
+        saveInputWatch()
+        NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
+    }
+
+    /// Terax focused the pane whose shell is `shell`: every unchecked finish running under it is checked.
+    /// Returns how many were.
+    @discardableResult
+    func check(underShell shell: pid_t, parent: (pid_t) -> pid_t? = ProcessLookup.parentPid) -> Int {
+        guard !previewMode else { return 0 }
+        let ids = sessions.filter { finished[$0.id] != nil && ProcessLookup.descends($0.pid, from: shell, parent: parent) }
+            .map(\.id)
+        guard !ids.isEmpty else { return 0 }
+        for id in ids { finished[id] = nil }
+        saveInputWatch()
+        NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
+        return ids.count
+    }
+
+    /// Brings forward the terminal (or other app) that owns this Claude process. Checks its finish.
     func reveal(_ session: ClaudeSession) {
-        var pid = session.pid
-        for _ in 0..<8 {
-            guard let parent = ProcessLookup.parentPid(pid) else { return }
-            if let app = NSRunningApplication(processIdentifier: parent), app.activationPolicy == .regular {
-                app.activate(from: .current)
-                return
-            }
-            pid = parent
+        let state: TeraxReveal.State =
+            session.needsInput ? .input : session.isWorking ? .running : finished[session.id] != nil ? .done : .idle
+        AppWindowFocus.revealTerminal(for: session.pid, state: state)
+        check(session.id)
+    }
+
+    /// From a "Claude finished" notification click.
+    func revealFinished(id: String) {
+        if let session = sessions.first(where: { $0.id == id }) {
+            reveal(session)
+        } else {
+            check(id)
         }
     }
 
@@ -125,6 +147,7 @@ final class ClaudeSessionsManager: ObservableObject {
     /// metas). Launch and panel open read synchronously, so the first layout already has the rows.
     private func refresh(inBackground: Bool = false) {
         guard inBackground else {
+            loadGeneration += 1
             apply(ClaudeSessionFiles.load())
             return
         }
@@ -133,13 +156,17 @@ final class ClaudeSessionsManager: ObservableObject {
             return
         }
         loading = true
+        let generation = loadGeneration
         Task.detached(priority: .utility) { [weak self] in
             let loaded = ClaudeSessionFiles.load()
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.loading = false
-                self.apply(loaded)
-                self.refreshUsage(for: loaded)
+                // A synchronous read (Terax refresh) landed meanwhile: this snapshot is older than it.
+                if generation == self.loadGeneration {
+                    self.apply(loaded)
+                    self.refreshUsage(for: loaded)
+                }
                 if self.refreshAgain {
                     self.refreshAgain = false
                     self.refresh(inBackground: true)
@@ -218,7 +245,6 @@ final class ClaudeSessionsManager: ObservableObject {
                 idleSince[id] = nil
                 if nextFinished.removeValue(forKey: id) != nil {
                     changed = true
-                    freshFinished.remove(id)
                 }
                 continue
             }
@@ -253,10 +279,11 @@ final class ClaudeSessionsManager: ObservableObject {
         let place = project.isEmpty || project == "—" ? item.name : "\(item.name) · \(project)"
         content.body = finish.ranFor < 0 ? place : "\(place) · ran \(ClaudeFinish.duration(finish.ranFor))"
         content.sound = .default
+        content.userInfo = [SessionNotificationRouter.sessionKey: "claude:\(item.id)"]
         let request = UNNotificationRequest(
             identifier: "claude-finished-\(item.id)-\(Int(finish.finishedAt.timeIntervalSince1970))",
             content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        Alerts.post(request)
     }
 
     private func ensureNotificationPermission() {
@@ -272,7 +299,7 @@ final class ClaudeSessionsManager: ObservableObject {
         content.body = project.isEmpty || project == "—" ? item.name : "\(item.name) · \(project)"
         content.sound = .default
         let request = UNNotificationRequest(identifier: "claude-input-\(item.id)", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        Alerts.post(request)
     }
 
     private static var storeURL: URL {
@@ -289,7 +316,8 @@ final class ClaudeSessionsManager: ObservableObject {
         // Runs saved more than 12 h ago are not resumed: MenuTools was likely closed through the end.
         runningSince = (file.runningSince ?? [:]).filter { Date().timeIntervalSince($0.value) < 12 * 3600 }
         restoredRuns = Set(runningSince.keys)
-        finished = file.finished ?? [:]
+        // A finish saved as seen predates checking: the panel had shown it, so it counts as checked.
+        finished = (file.finished ?? [:]).filter { !$0.value.seen }
     }
 
     private func saveInputWatch() {
@@ -333,10 +361,12 @@ private struct InputWatch: Codable {
     var finished: [String: ClaudeFinish]?
 }
 
-/// A live session's last run finished.
+/// A live session's last run finished, not checked yet.
 struct ClaudeFinish: Codable, Equatable, Sendable {
     var finishedAt: Date
     var ranFor: TimeInterval
+    /// Always false now: a checked finish is removed. Kept so older watch files decode, where true
+    /// meant the panel had shown it.
     var seen: Bool
 
     /// "45s", "12m", "1h 05m".

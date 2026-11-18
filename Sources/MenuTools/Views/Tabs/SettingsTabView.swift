@@ -224,7 +224,6 @@ private struct SettingsSectionPage: View {
                 generalCard
                 shelfCard
                 ClipboardSettingsCard(clipboard: appState.clipboard)
-                AILimitsSettingsCard(manager: appState.aiLimits)
                 appInfoCard
             case .look:
                 ThemeGallery()
@@ -573,6 +572,10 @@ private struct SettingsSectionPage: View {
 
             Divider().opacity(0.35)
 
+            AILimitsProvidersRow(manager: appState.aiLimits)
+
+            Divider().opacity(0.35)
+
             LidBatteryGuardRow(antiSleep: appState.antiSleep)
 
             Divider().opacity(0.35)
@@ -706,6 +709,16 @@ private struct StatusLightsRows: View {
                     .controlSize(.small)
             }
             .padding(.leading, 12)
+            SettingsRow(title: "Own icon", isSecondary: true) {
+                Toggle("", isOn: $settings.separateItem)
+                    .labelsHidden()
+                    .toggleStyle(.smallSwitch)
+                    .controlSize(.small)
+                    .help(
+                        "Sessions on their own menu bar icon: click opens Sessions. The main icon opens the dashboard."
+                    )
+            }
+            .padding(.leading, 12)
             SettingsRow(title: "Extras", isSecondary: true) {
                 HStack(spacing: 4) {
                     ExtraToggle(symbol: "timer", help: Self.busyHelp, isOn: $settings.busyTimer)
@@ -815,25 +828,61 @@ private struct ExtraToggle: View {
 
 // MARK: - AI Limits
 
-private struct AILimitsSettingsCard: View {
+/// Which providers the AI Limits card shows: one chip per provider, lit when shown. One row
+/// instead of a card of four switches, which pushed General past the screen height.
+private struct AILimitsProvidersRow: View {
     @ObservedObject var manager: AILimitsManager
 
     var body: some View {
-        SettingsCard(title: "AI Limits", icon: "sparkles", color: .secondary) {
-            ForEach(Array(AIProvider.allCases.enumerated()), id: \.element) { index, provider in
-                if index > 0 { Divider().opacity(0.35) }
-                SettingsRow(title: provider.displayName) {
-                    Toggle(
-                        "",
+        SettingsRow(title: "AI limits") {
+            HStack(spacing: 3) {
+                ForEach(AIProvider.allCases) { provider in
+                    ChipToggle(
+                        title: provider.chipName, help: provider.displayName,
                         isOn: Binding(
                             get: { manager.enabledProviders.contains(provider) },
-                            set: { manager.setEnabled(provider, $0) })
-                    )
-                    .labelsHidden()
-                    .toggleStyle(.smallSwitch)
-                    .controlSize(.small)
+                            set: { manager.setEnabled(provider, $0) }))
                 }
             }
+        }
+    }
+}
+
+/// Small text switch: lit when on. The text twin of `ExtraToggle`.
+private struct ChipToggle: View {
+    let title: String
+    let help: String
+    @Binding var isOn: Bool
+    @Environment(\.appTheme) private var theme
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            Text(title)
+                .font(.system(size: 10.5, weight: .medium))
+                .lineLimit(1)
+                .foregroundStyle(isOn ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.tertiary))
+                .padding(.horizontal, 6)
+                .frame(height: 20)
+                .background(
+                    isOn ? theme.accent.opacity(0.15) : Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(help) (\(isOn ? "on" : "off"))")
+    }
+}
+
+private extension AIProvider {
+    var chipName: String {
+        switch self {
+        case .claude: return "Claude"
+        case .codex: return "Codex"
+        case .antigravity: return "Agy"
+        case .cursor: return "Cursor"
         }
     }
 }
@@ -951,22 +1000,18 @@ private struct RequirementRow: View {
     }
 }
 
+/// One row of chips (lit = on) instead of three switch rows; General has to fit the screen.
 private struct ClipboardSettingsCard: View {
     @ObservedObject var clipboard: ClipboardManager
 
     var body: some View {
         SettingsCard(title: "Clipboard", icon: "doc.on.clipboard", color: .secondary) {
-            SettingsRow(title: "Images") {
-                Toggle("", isOn: $clipboard.captureImages)
-                    .labelsHidden().toggleStyle(.smallSwitch).controlSize(.small)
-            }
-            SettingsRow(title: "Files") {
-                Toggle("", isOn: $clipboard.captureFiles)
-                    .labelsHidden().toggleStyle(.smallSwitch).controlSize(.small)
-            }
-            SettingsRow(title: "Plain paste ⇧⌥⌘V") {
-                Toggle("", isOn: $clipboard.plainPasteHotkey)
-                    .labelsHidden().toggleStyle(.smallSwitch).controlSize(.small)
+            SettingsRow(title: "Keep") {
+                HStack(spacing: 3) {
+                    ChipToggle(title: "Images", help: "Keep copied images", isOn: $clipboard.captureImages)
+                    ChipToggle(title: "Files", help: "Keep copied files", isOn: $clipboard.captureFiles)
+                    ChipToggle(title: "Plain ⇧⌥⌘V", help: "Paste as plain text with ⇧⌥⌘V", isOn: $clipboard.plainPasteHotkey)
+                }
             }
         }
     }

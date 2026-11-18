@@ -1,21 +1,20 @@
 import Foundation
 import SwiftUI
-import UserNotifications
 
 /// Live Codex CLI processes. A process exiting is the chat ending (unlike Cursor, which keeps headers).
 @MainActor
 final class CodexSessionsManager: ObservableObject {
     @Published private(set) var sessions: [CodexSession] = []
     @Published private(set) var ended: [CodexEndedSession] = []
-    /// Ended ids that were new when this panel open started. They stay blue until the panel closes.
-    @Published private(set) var freshEnded: Set<String> = []
 
     private let previewMode: Bool
     private var timer: Timer?
     private var tracking: [String: CodexFact] = [:]
-    private var askedPermission = false
     private var panelOpen = false
     private var pollInterval: TimeInterval = 15
+    private var loading = false
+    private var refreshAgain = false
+    private var loadGeneration = 0
 
     private static let fastInterval: TimeInterval = 2
     private static let idleInterval: TimeInterval = 15
@@ -30,7 +29,7 @@ final class CodexSessionsManager: ObservableObject {
             return
         }
         load()
-        ensureNotificationPermission()
+        SessionNotifier.ensurePermission()
         refresh()
         reschedule()
     }
@@ -38,15 +37,19 @@ final class CodexSessionsManager: ObservableObject {
     func startMonitoring() {
         guard !previewMode else { return }
         panelOpen = true
-        noteFreshEnded()
-        refresh()
+        refresh(inBackground: true)
         reschedule()
+    }
+
+    /// Re-reads now, for a Terax refresh. Changes nothing the panel shows as seen.
+    func refreshNow() {
+        guard !previewMode else { return }
+        refresh()
     }
 
     func stopMonitoring() {
         guard !previewMode else { return }
         panelOpen = false
-        if !freshEnded.isEmpty { freshEnded = [] }
         reschedule()
     }
 
@@ -54,6 +57,7 @@ final class CodexSessionsManager: ObservableObject {
         guard ended.contains(where: { $0.id == id }) else { return }
         ended.removeAll { $0.id == id }
         save()
+        NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
     }
 
     func reveal(_ session: CodexSession) {
@@ -63,10 +67,7 @@ final class CodexSessionsManager: ObservableObject {
     func revealEnded(_ item: CodexEndedSession) {
         AppWindowFocus.reveal(
             named: ["ChatGPT", "Codex"], bundles: ["ChatGPT.app", "Codex.app"], project: item.project, cwd: item.cwd)
-        if let index = ended.firstIndex(where: { $0.id == item.id }), !ended[index].seen {
-            ended[index].seen = true
-            save()
-        }
+        check(item.id)
     }
 
     private func reschedule() {
@@ -77,7 +78,7 @@ final class CodexSessionsManager: ObservableObject {
         pollInterval = interval
         timer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in self?.refresh(inBackground: true) }
         }
         timer.tolerance = interval == Self.fastInterval ? 0.5 : interval * 0.3
         // `.common` still fires while another app is tracking the mouse. `.default` does not.
@@ -85,9 +86,37 @@ final class CodexSessionsManager: ObservableObject {
         self.timer = timer
     }
 
-    private func refresh() {
+    /// Timer ticks and the panel opening walk the process table (about 10 ms) off the main thread.
+    /// Launch and a Terax refresh read synchronously, so their answer already has the rows.
+    private func refresh(inBackground: Bool = false) {
+        guard inBackground else {
+            loadGeneration += 1
+            apply(CodexSessionFiles.load())
+            return
+        }
+        guard !loading else {
+            refreshAgain = true
+            return
+        }
+        loading = true
+        let generation = loadGeneration
+        Task.detached(priority: .utility) { [weak self] in
+            let loaded = CodexSessionFiles.load()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.loading = false
+                // A synchronous read landed meanwhile: this snapshot is older than it.
+                if generation == self.loadGeneration { self.apply(loaded) }
+                if self.refreshAgain {
+                    self.refreshAgain = false
+                    self.refresh(inBackground: true)
+                }
+            }
+        }
+    }
+
+    private func apply(_ loaded: [CodexSession]) {
         defer { NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil) }
-        let loaded = CodexSessionFiles.load()
         if loaded != sessions { sessions = loaded }
         let liveIDs = Set(loaded.map(\.id))
         var changed = false
@@ -119,41 +148,38 @@ final class CodexSessionsManager: ObservableObject {
         if !finished.isEmpty {
             ended.append(contentsOf: finished)
             changed = true
-            ensureNotificationPermission()
+            SessionNotifier.ensurePermission()
             for item in finished { notify(item) }
         }
         if changed { save() }
         reschedule()
     }
 
-    /// Remember which ended rows are new. They stay blue, and the menu bar stays blue, until the row is on screen.
-    private func noteFreshEnded() {
-        let fresh = Set(ended.filter { !$0.seen }.map(\.id))
-        if fresh != freshEnded { freshEnded = fresh }
+    /// The user dealt with this ended row (its click, its ✓, its notification). It turns grey and
+    /// folds away with the quiet rows; dismissing removes it.
+    func check(_ id: String) {
+        guard !previewMode, let index = ended.firstIndex(where: { $0.id == id }), !ended[index].seen else { return }
+        ended[index].seen = true
+        save()
+        NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
     }
 
-    /// The ended rows are visible. Clear the menu-bar blue and keep the blue row until the panel closes.
-    func acknowledgeEnded() {
+    func checkAll() {
         guard !previewMode, hasUnseenEnded else { return }
-        freshEnded.formUnion(ended.filter { !$0.seen }.map(\.id))
         for index in ended.indices { ended[index].seen = true }
         save()
         NotificationCenter.default.post(name: .sessionMenuMarksChanged, object: nil)
     }
 
-    private func ensureNotificationPermission() {
-        guard !askedPermission else { return }
-        askedPermission = true
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    /// From a "finished" notification click.
+    func revealEnded(id: String) {
+        if let item = ended.first(where: { $0.id == id }) { revealEnded(item) }
     }
 
     private func notify(_ item: CodexEndedSession) {
-        let content = UNMutableNotificationContent()
-        content.title = "Codex finished"
-        content.body = item.project == "—" ? item.name : "\(item.name) · \(item.project)"
-        content.sound = .default
-        let request = UNNotificationRequest(identifier: "codex-ended-\(item.id)", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        SessionNotifier.post(
+            title: "Codex finished", name: item.name, project: item.project, identifier: "codex-ended-\(item.id)",
+            session: "codex:\(item.id)")
     }
 
     private static var storeURL: URL {
