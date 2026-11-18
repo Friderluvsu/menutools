@@ -15,6 +15,7 @@ enum PanelMemoryDiagnose {
             report("launch, panel never opened")
             if let state = delegate.appStateForDiagnose {
                 state.onPopoverWillShow()
+                state.onPopoverDidShow()
                 await sleep(4)
                 state.onPopoverDidClose()
                 await sleep(1)

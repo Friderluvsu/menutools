@@ -4,6 +4,7 @@ enum AIProvider: String, CaseIterable, Identifiable, Sendable, Codable {
     case claude
     case codex
     case antigravity
+    case cursor
 
     var id: String { rawValue }
 
@@ -12,6 +13,7 @@ enum AIProvider: String, CaseIterable, Identifiable, Sendable, Codable {
         case .claude: return "Claude Code"
         case .codex: return "Codex"
         case .antigravity: return "Antigravity"
+        case .cursor: return "Cursor"
         }
     }
 
@@ -20,6 +22,7 @@ enum AIProvider: String, CaseIterable, Identifiable, Sendable, Codable {
         case .claude: return "asterisk"
         case .codex: return "chevron.left.forwardslash.chevron.right"
         case .antigravity: return "arrow.up.forward.circle"
+        case .cursor: return "cursorarrow"
         }
     }
 
@@ -28,6 +31,7 @@ enum AIProvider: String, CaseIterable, Identifiable, Sendable, Codable {
         case .claude: return "Sign in with `claude`"
         case .codex: return "Sign in with `codex`"
         case .antigravity: return "Open Antigravity"
+        case .cursor: return "Sign in with `agent`"
         }
     }
 
@@ -37,8 +41,11 @@ enum AIProvider: String, CaseIterable, Identifiable, Sendable, Codable {
         case .claude: return "claude"
         case .codex: return "codex login"
         case .antigravity: return "agy"
+        case .cursor: return "agent login"
         }
     }
+
+    var renewsInTerminal: Bool { true }
 
     private var enabledKey: String { "AILimits.enabled.\(rawValue)" }
 

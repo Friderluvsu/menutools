@@ -2,12 +2,15 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// Collects subscription usage for Claude Code, Codex and Antigravity.
-/// Everything is read locally (CLI credentials / local language server) — no extra login.
+/// Collects subscription usage for Claude Code, Codex, Antigravity and Cursor.
+/// Everything is read locally (CLI credentials / local session) — no extra login.
 @MainActor
 final class AILimitsManager: ObservableObject {
     @Published private(set) var usage: [AIProvider: AIProviderUsage] = [:]
-    @Published private(set) var isRefreshing = false
+    /// Providers with a fetch in flight. Each one finishes on its own, so a slow CLI (Cursor up
+    /// to 25 s, agy up to 90 s) never holds the refresh button for the others.
+    @Published private(set) var refreshing: Set<AIProvider> = []
+    var isRefreshing: Bool { !refreshing.isEmpty }
     @Published private(set) var lastRefresh: Date?
     @Published private(set) var enabledProviders: Set<AIProvider>
 
@@ -62,7 +65,7 @@ final class AILimitsManager: ObservableObject {
         }
     }
 
-    /// Opens Terminal on the provider's own CLI so it renews its login; we never touch the tokens.
+    /// Asks the provider to renew its own login in Terminal. MenuTools never writes a provider token.
     func openLoginTerminal(for provider: AIProvider) {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("MenuTools-\(provider.rawValue)-login.command")
@@ -97,12 +100,13 @@ final class AILimitsManager: ObservableObject {
     }
 
     /// `force` = user pressed refresh: skips the staleness check and soft back-off, never a 429 block.
+    /// A press within `minimumGap` of the last attempt is queued until the gap ends, not dropped.
     func refresh(force: Bool) async {
-        guard !previewMode, !isRefreshing else { return }
+        guard !previewMode else { return }
         let now = Date.now
 
-        var due: [AIProvider] = []
-        for provider in visibleProviders {
+        var due: [(provider: AIProvider, delay: TimeInterval)] = []
+        for provider in visibleProviders where !refreshing.contains(provider) {
             if let until = blockedUntil[provider], until > now {
                 if usage[provider] == nil {
                     usage[provider] = .failed(
@@ -110,26 +114,34 @@ final class AILimitsManager: ObservableObject {
                 }
                 continue
             }
-            if let last = lastAttempt[provider],
-                now.timeIntervalSince(last) < (force ? Self.minimumGap : Self.staleInterval)
-            {
-                continue
+            var delay: TimeInterval = 0
+            if let last = lastAttempt[provider] {
+                let elapsed = now.timeIntervalSince(last)
+                if force {
+                    delay = max(0, Self.minimumGap - elapsed)
+                } else if elapsed < Self.staleInterval {
+                    continue
+                }
             }
             if !force, let retry = retryNotBefore[provider], retry > now { continue }
-            due.append(provider)
+            due.append((provider, delay))
         }
         guard !due.isEmpty else { return }
 
-        isRefreshing = true
-        defer { isRefreshing = false }
-
-        for provider in due { lastAttempt[provider] = now }
+        for item in due {
+            refreshing.insert(item.provider)
+            lastAttempt[item.provider] = now.addingTimeInterval(item.delay)
+        }
         await withTaskGroup(of: AIProviderUsage.self) { group in
-            for provider in due {
-                group.addTask { await Self.fetch(provider) }
+            for item in due {
+                group.addTask {
+                    if item.delay > 0 { try? await Task.sleep(nanoseconds: UInt64(item.delay * 1_000_000_000)) }
+                    return await Self.fetch(item.provider)
+                }
             }
             for await result in group {
                 apply(result)
+                refreshing.remove(result.provider)
             }
         }
     }
@@ -215,6 +227,7 @@ final class AILimitsManager: ObservableObject {
         case .claude: return await ClaudeUsageFetcher.fetch()
         case .codex: return await CodexUsageFetcher.fetch()
         case .antigravity: return await AntigravityUsageFetcher.fetch()
+        case .cursor: return await CursorUsageFetcher.fetch()
         }
     }
 
@@ -237,6 +250,12 @@ final class AILimitsManager: ObservableObject {
                 windows: [
                     AIUsageWindow(label: "Gemini Pro", usedFraction: 0.3, resetsAt: now.addingTimeInterval(3 * 3600)),
                     AIUsageWindow(label: "Claude", usedFraction: 0.75, resetsAt: now.addingTimeInterval(5 * 3600)),
+                ],
+                status: .ok, fetchedAt: now),
+            .cursor: AIProviderUsage(
+                provider: .cursor, plan: "PRO",
+                windows: [
+                    AIUsageWindow(label: "Included", usedFraction: 0.42, resetsAt: now.addingTimeInterval(12 * 86400)),
                 ],
                 status: .ok, fetchedAt: now),
         ]

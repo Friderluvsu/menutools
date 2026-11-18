@@ -15,23 +15,17 @@ public final class SMCHelperManager: ObservableObject {
     }
 
     public func checkHelperInstalled() {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: Self.installedHelperPath) else {
-            self.isHelperInstalled = false
-            return
-        }
+        isHelperInstalled = Self.isHelperInstalledSync
+    }
 
-        do {
-            let attrs = try fm.attributesOfItem(atPath: Self.installedHelperPath)
-            let posixPerms = (attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0
-            let ownerID = (attrs[.ownerAccountID] as? NSNumber)?.intValue ?? -1
-
-            // Needs to be owned by root (UID 0) and have setuid (04000) or executable permissions
-            let isSetuidRoot = (ownerID == 0) && ((posixPerms & 0o4000) != 0)
-            self.isHelperInstalled = isSetuidRoot || (ownerID == 0 && (posixPerms & 0o111) != 0)
-        } catch {
-            self.isHelperInstalled = false
+    /// Root-owned and setuid (or executable): pmset can be changed without an admin prompt.
+    nonisolated public static var isHelperInstalledSync: Bool {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: installedHelperPath) else {
+            return false
         }
+        let posixPerms = (attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0
+        let ownerID = (attrs[.ownerAccountID] as? NSNumber)?.intValue ?? -1
+        return ownerID == 0 && ((posixPerms & 0o4000) != 0 || (posixPerms & 0o111) != 0)
     }
 
     public var bundledHelperPath: String? {
@@ -133,34 +127,45 @@ public final class SMCHelperManager: ObservableObject {
         }.value
     }
 
-    public func setLidSleep(disabled: Bool) async -> Bool {
+    /// `allowPrompt` false: helper and `sudo -n` only, for changes made with nobody at the Mac.
+    public func setLidSleep(disabled: Bool, allowPrompt: Bool = true) async -> Bool {
         let useHelper = isHelperInstalled
         let val = disabled ? "1" : "0"
         // Off the main actor: the helper, sudo and the admin prompt fallback may all block.
         return await Task.detached(priority: .userInitiated) {
-            Self.runPmset(setting: "disablesleep", value: val, useHelper: useHelper)
+            Self.runPmset(setting: "disablesleep", value: val, useHelper: useHelper, allowPrompt: allowPrompt)
         }.value
     }
 
-    public func setLowPowerMode(enabled: Bool) async -> Bool {
+    public func setLowPowerMode(enabled: Bool, allowPrompt: Bool = true) async -> Bool {
         let useHelper = isHelperInstalled
         let val = enabled ? "1" : "0"
         return await Task.detached(priority: .userInitiated) {
-            Self.runPmset(setting: "lowpowermode", value: val, useHelper: useHelper)
+            Self.runPmset(setting: "lowpowermode", value: val, useHelper: useHelper, allowPrompt: allowPrompt)
         }.value
+    }
+
+    /// Blocking Low Power Mode restore for app termination (Rest mode turned it on). Never a prompt.
+    nonisolated public static func restoreLowPowerSync() {
+        let useHelper = FileManager.default.isExecutableFile(atPath: installedHelperPath)
+        _ = runPmset(setting: "lowpowermode", value: "0", useHelper: useHelper, allowPrompt: false)
     }
 
     /// Blocking restore of system sleep for app termination, where no Task would get to run.
     nonisolated public static func restoreSleepSync() {
         let helperPath = installedHelperPath
         let useHelper = FileManager.default.isExecutableFile(atPath: helperPath)
-        _ = runPmset(setting: "disablesleep", value: "0", useHelper: useHelper)
+        // Never an admin prompt here: it would hang quit and logout (the next launch restores instead).
+        _ = runPmset(setting: "disablesleep", value: "0", useHelper: useHelper, allowPrompt: false)
     }
 
     /// Helper first, then non-interactive sudo, then the admin prompt. Blocks the calling thread.
-    nonisolated private static func runPmset(setting: String, value: String, useHelper: Bool) -> Bool {
+    nonisolated private static func runPmset(
+        setting: String, value: String, useHelper: Bool, allowPrompt: Bool = true
+    ) -> Bool {
         if useHelper, runProcess(installedHelperPath, [setting, value]) { return true }
         if runProcess("/usr/bin/sudo", ["-n", "/usr/bin/pmset", "-a", setting, value]) { return true }
+        guard allowPrompt else { return false }
         let script = "do shell script \"/usr/bin/pmset -a \(setting) \(value)\" with administrator privileges"
         var errorDict: NSDictionary?
         _ = NSAppleScript(source: script)?.executeAndReturnError(&errorDict)

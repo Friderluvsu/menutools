@@ -36,6 +36,7 @@ enum MacToolsTheme {
 }
 
 struct MacToolsCard<Content: View>: View {
+    @Environment(\.appTheme) private var theme
     let content: Content
     var padding: CGFloat = 8
     var cornerRadius: CGFloat = MacToolsTheme.cornerRadius
@@ -52,12 +53,13 @@ struct MacToolsCard<Content: View>: View {
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(MacToolsTheme.cardBackground)
+                RoundedRectangle(cornerRadius: theme.radius(cornerRadius), style: .continuous)
+                    .fill(theme.cardFill)
+                    .shadow(color: theme.glow ?? .clear, radius: theme.glow == nil ? 0 : 6)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(MacToolsTheme.borderColor, lineWidth: 1)
+                RoundedRectangle(cornerRadius: theme.radius(cornerRadius), style: .continuous)
+                    .strokeBorder(theme.cardStroke, lineWidth: theme.strokeWidth)
             )
     }
 }
@@ -122,24 +124,31 @@ extension View {
 
 /// Subtle hover highlight for plain buttons and rows.
 struct HoverHighlight: ViewModifier {
+    @Environment(\.appTheme) private var theme
     var cornerRadius: CGFloat = 8
     @State private var isHovered = false
 
     func body(content: Content) -> some View {
         content
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.primary.opacity(isHovered ? 0.05 : 0))
+                RoundedRectangle(cornerRadius: theme.radius(cornerRadius), style: .continuous)
+                    .fill(isHovered ? theme.hoverFill : .clear)
                     .allowsHitTesting(false)
             )
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
             }
+            .onDisappear { isHovered = false }
     }
 }
 
 extension View {
     func hoverHighlight(cornerRadius: CGFloat = 8) -> some View {
         modifier(HoverHighlight(cornerRadius: cornerRadius))
+    }
+
+    /// Clicks in the panel should not draw the accent focus ring.
+    func suppressesFocusRing() -> some View {
+        focusable(false).focusEffectDisabled()
     }
 }

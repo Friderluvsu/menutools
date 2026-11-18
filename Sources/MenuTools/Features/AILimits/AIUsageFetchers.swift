@@ -3,9 +3,12 @@ import Security
 
 // Usage sources (same approach as CodexBar):
 // • Claude Code — OAuth token from Keychain "Claude Code-credentials" → api.anthropic.com/api/oauth/usage
+//   (Pro/Max: five_hour / seven_day; Enterprise: dollar pool → Included, extra_usage/spend → Spend)
 // • Codex — ~/.codex/auth.json → chatgpt.com/backend-api/wham/usage, fallback: ~/.codex/sessions rollout logs
 // • Antigravity — local language server RPC when the IDE is open (csrf token from its process arguments),
 //   otherwise the `agy` CLI login (Keychain "gemini"/"antigravity") → cloudcode-pa quota API
+// • Cursor — the installed `agent` CLI (`agent about`). A require-hook in that process
+//   reads period usage with the CLI's own client. No HTTP calls and no token reads.
 //
 // Claude token policy: Claude Code owns OAuth rotation, so we never run the refresh-token exchange and never
 // write its Keychain item. No documented non-interactive, non-inference `claude` command refreshes it either
@@ -48,12 +51,32 @@ enum ClaudeUsageFetcher {
         let scope: Scope?
     }
 
+    /// Extra credits / monthly spend cap. Amounts are minor units (cents).
+    private struct ExtraUsage: Decodable {
+        let is_enabled: Bool?
+        let monthly_limit: Double?
+        let used_credits: Double?
+        let utilization: Double?
+    }
+
+    private struct Spend: Decodable {
+        struct Money: Decodable {
+            let amount_minor: Double?
+        }
+        let enabled: Bool?
+        let percent: Double?
+        let used: Money?
+        let limit: Money?
+    }
+
     private struct UsageResponse: Decodable {
         let five_hour: Window?
         let seven_day: Window?
         let seven_day_opus: Window?
         let seven_day_sonnet: Window?
         let limits: [Limit]?
+        let extra_usage: ExtraUsage?
+        let spend: Spend?
     }
 
     static func fetch() async -> AIProviderUsage {
@@ -93,8 +116,10 @@ enum ClaudeUsageFetcher {
             default: return .failed(.claude, "HTTP \(status)")
             }
             let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             return AIProviderUsage(
-                provider: .claude, plan: plan, windows: windows(from: usage), status: .ok, fetchedAt: .now)
+                provider: .claude, plan: plan, windows: windows(from: usage, json: json), status: .ok,
+                fetchedAt: .now)
         } catch {
             return .failed(.claude, AIFetchSupport.describe(error))
         }
@@ -134,7 +159,7 @@ enum ClaudeUsageFetcher {
         return items.map { "\($0.service)@\($0.modified.timeIntervalSince1970)" }.joined(separator: "|")
     }
 
-    private static func windows(from usage: UsageResponse) -> [AIUsageWindow] {
+    private static func windows(from usage: UsageResponse, json: [String: Any]?) -> [AIUsageWindow] {
         var result: [AIUsageWindow] = []
         func add(_ label: String, _ window: Window?) {
             guard let window, let utilization = window.utilization else { return }
@@ -163,7 +188,54 @@ enum ClaudeUsageFetcher {
                         resetsAt: AIFetchSupport.parseDate(limit.resets_at)))
             }
         }
+
+        // Enterprise (and some Team) seats: no 5h/weekly windows. Same payload, different fields.
+        if let included = includedWindow(from: json) { result.append(included) }
+        if let spend = spendWindow(from: usage) { result.append(spend) }
         return result
+    }
+
+    /// Dollar-metered included usage. Pool keys are obfuscated; pick the object that has
+    /// `utilization` plus `limit_dollars` / `used_dollars`, skipping the consumer windows.
+    private static func includedWindow(from json: [String: Any]?) -> AIUsageWindow? {
+        guard let json else { return nil }
+        var best: (utilization: Double, resetsAt: Date?)?
+        for (key, value) in json {
+            if key == "five_hour" || key.hasPrefix("seven_day") { continue }
+            guard let pool = value as? [String: Any],
+                pool["limit_dollars"] != nil || pool["used_dollars"] != nil,
+                let utilization = (pool["utilization"] as? NSNumber)?.doubleValue
+            else { continue }
+            if let current = best, current.utilization >= utilization { continue }
+            best = (utilization, AIFetchSupport.parseDate(pool["resets_at"]))
+        }
+        guard let best else { return nil }
+        return AIUsageWindow(
+            label: "Included", usedFraction: best.utilization / 100, resetsAt: best.resetsAt)
+    }
+
+    /// Monthly spend / extra-credits cap. Shown on Enterprise and when usage credits are on.
+    private static func spendWindow(from usage: UsageResponse) -> AIUsageWindow? {
+        let extra = usage.extra_usage
+        let spend = usage.spend
+        guard extra?.is_enabled == true || spend?.enabled == true else { return nil }
+        let hasLimit = (spend?.limit?.amount_minor ?? 0) > 0 || (extra?.monthly_limit ?? 0) > 0
+        guard hasLimit else { return nil }
+
+        let fraction: Double?
+        if let percent = spend?.percent {
+            fraction = percent / 100
+        } else if let utilization = extra?.utilization {
+            fraction = utilization / 100
+        } else if let used = extra?.used_credits, let limit = extra?.monthly_limit, limit > 0 {
+            fraction = used / limit
+        } else if let used = spend?.used?.amount_minor, let limit = spend?.limit?.amount_minor, limit > 0 {
+            fraction = used / limit
+        } else {
+            return nil
+        }
+        guard let fraction else { return nil }
+        return AIUsageWindow(label: "Spend", usedFraction: fraction, resetsAt: nil)
     }
 
     private static func planName(_ oauth: Credentials.OAuth) -> String? {
@@ -879,18 +951,131 @@ extension AntigravityUsageFetcher {
     }
 }
 
+// MARK: - Cursor
+
+enum CursorUsageFetcher {
+    private static let loginMessage = "Login expired — run agent login"
+
+    static func fetch() async -> AIProviderUsage {
+        guard let agent = agentPath() else {
+            return .notConnected(.cursor, "Install the Cursor CLI")
+        }
+        guard let hook = Bundle.main.url(forResource: "cursor-usage-hook", withExtension: "js") else {
+            return .failed(.cursor, "Couldn't read Cursor usage")
+        }
+        // The hook asks the CLI's own client for period usage and drops the email
+        // before the JSON is printed. Compile cache would skip that patch.
+        let about = await AIFetchSupport.run(
+            agent, ["about", "--format", "json"], timeout: 25,
+            directory: FileManager.default.temporaryDirectory,
+            environment: [
+                "NODE_OPTIONS": "--require \"\(hook.path)\"",
+                "NODE_DISABLE_COMPILE_CACHE": "1",
+            ])
+        guard about.status == 0, let aboutJSON = jsonObject(about.output) else {
+            return .failed(.cursor, "Couldn't read Cursor usage")
+        }
+        guard let plan = planLabel(aboutJSON["subscriptionTier"] as? String) else {
+            return .failed(.cursor, loginMessage)
+        }
+        guard let usage = aboutJSON["usage"] as? [String: Any], usage["error"] == nil else {
+            return .failed(.cursor, "Couldn't read Cursor usage")
+        }
+        return AIProviderUsage(
+            provider: .cursor, plan: plan, windows: windows(from: usage), status: .ok, fetchedAt: .now)
+    }
+
+    /// Percents are 0–100, from the CLI's period-usage call. The two fullest are shown.
+    private static func windows(from usage: [String: Any]) -> [AIUsageWindow] {
+        let reset = cycleEnd(usage["billingCycleEnd"])
+        let fields = [
+            ("Included", "totalPercentUsed"),
+            ("Auto", "autoPercentUsed"),
+            ("API", "apiPercentUsed"),
+            ("On-demand", "onDemandPercentUsed"),
+        ]
+        return fields.compactMap { label, key in
+            guard let fraction = percent(usage[key]) else { return nil }
+            return AIUsageWindow(label: label, usedFraction: fraction, resetsAt: reset)
+        }
+    }
+
+    /// 0–100 from the CLI. Missing values are omitted; 0% is a real reading.
+    private static func percent(_ value: Any?) -> Double? {
+        let number: Double?
+        if let value = value as? Double { number = value }
+        else if let value = value as? Int { number = Double(value) }
+        else if let value = value as? NSNumber { number = value.doubleValue }
+        else if let value = value as? String { number = Double(value) }
+        else { number = nil }
+        guard let number, number.isFinite else { return nil }
+        return min(max(number / 100, 0), 1)
+    }
+
+    private static func cycleEnd(_ value: Any?) -> Date? {
+        let number: Double?
+        if let value = value as? Double { number = value }
+        else if let value = value as? Int { number = Double(value) }
+        else if let value = value as? NSNumber { number = value.doubleValue }
+        else { number = nil }
+        guard let number, number > 0 else { return nil }
+        let seconds = number > 100_000_000_000 ? number / 1000 : number
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    private static func planLabel(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty, raw != "null" else {
+            return nil
+        }
+        switch raw.lowercased().replacingOccurrences(of: " ", with: "") {
+        case "pro": return "PRO"
+        case "pro+", "proplus", "pro_plus": return "PRO+"
+        case "ultra": return "ULTRA"
+        case "free", "hobby": return "FREE"
+        case "business", "team": return "TEAM"
+        default: return raw.uppercased()
+        }
+    }
+
+    private static func jsonObject(_ data: Data) -> [String: Any]? {
+        let text = String(decoding: data, as: UTF8.self)
+        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"),
+            let json = try? JSONSerialization.jsonObject(with: Data(text[start...end].utf8)) as? [String: Any]
+        else { return nil }
+        return json
+    }
+
+    private static func agentPath() -> String? {
+        let home = NSHomeDirectory()
+        return ["\(home)/.local/bin/agent", "/opt/homebrew/bin/agent", "/usr/local/bin/agent"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    static func diagnostics() async -> [String] {
+        guard let agent = agentPath() else { return ["[cursor] cli=missing"] }
+        let status = await AIFetchSupport.run(
+            agent, ["status", "--format", "json"], timeout: 20,
+            directory: FileManager.default.temporaryDirectory)
+        let authenticated = jsonObject(status.output)?["isAuthenticated"] as? Bool == true
+        return ["[cursor] cli=found auth=\(authenticated)"]
+    }
+}
+
 // MARK: - Shared helpers
 
 enum AIFetchSupport {
     /// Prints per-provider status without any secrets (`MenuTools --ai-limits-diagnose`).
     static func diagnose() async -> [String] {
-        var lines = await ClaudeUsageFetcher.diagnostics() + AntigravityUsageFetcher.diagnostics()
+        var lines =
+            await ClaudeUsageFetcher.diagnostics() + AntigravityUsageFetcher.diagnostics()
+            + CursorUsageFetcher.diagnostics()
         for provider in AIProvider.allCases {
             let usage: AIProviderUsage
             switch provider {
             case .claude: usage = await ClaudeUsageFetcher.fetch()
             case .codex: usage = await CodexUsageFetcher.fetch()
             case .antigravity: usage = await AntigravityUsageFetcher.fetch()
+            case .cursor: usage = await CursorUsageFetcher.fetch()
             }
             let windows = usage.windows.map {
                 "\($0.label)=\(Int($0.usedFraction * 100))% reset=\(AIResetFormatter.short(until: $0.resetsAt))"
@@ -910,7 +1095,8 @@ enum AIFetchSupport {
 
     /// Runs a tool with explicit arguments (no shell) off the main thread.
     static func run(
-        _ executable: String, _ arguments: [String], timeout: TimeInterval = 10, directory: URL? = nil
+        _ executable: String, _ arguments: [String], timeout: TimeInterval = 10, directory: URL? = nil,
+        environment: [String: String] = [:]
     ) async -> (output: Data, status: Int32) {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
@@ -919,6 +1105,11 @@ enum AIFetchSupport {
                 process.arguments = arguments
                 process.currentDirectoryURL = directory
                 process.standardInput = FileHandle.nullDevice
+                if !environment.isEmpty {
+                    var env = ProcessInfo.processInfo.environment
+                    for (key, value) in environment { env[key] = value }
+                    process.environment = env
+                }
                 let pipe = Pipe()
                 process.standardOutput = pipe
                 process.standardError = FileHandle.nullDevice

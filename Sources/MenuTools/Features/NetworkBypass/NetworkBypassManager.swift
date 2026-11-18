@@ -47,6 +47,9 @@ final class NetworkBypassManager: ObservableObject {
     /// Discovered once; `scutil --nc list` is not needed again while the id keeps working.
     private var cachedVPNUUID: String?
     private var lastInterfaceLookup: Date?
+    /// When the VPN id was last searched for and not found, so a Mac without VanyaVPN does not run
+    /// `scutil --nc list` on every 5 s refresh.
+    private var lastVPNUUIDMiss: Date?
 
     init() {
         let defaults = UserDefaults.standard
@@ -90,6 +93,15 @@ final class NetworkBypassManager: ObservableObject {
         pollCancellable = nil
     }
 
+    /// Re-checks VPN and SpoofDPI and returns once the result is published, at most `timeout` later.
+    func refreshStatusNow(timeout: TimeInterval = 4) async {
+        refreshStatus()
+        let deadline = Date().addingTimeInterval(timeout)
+        while isRefreshing, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
     func refreshStatus() {
         guard !isVPNTransitioning && !isSpoofTransitioning && !isRefreshing else { return }
         isRefreshing = true
@@ -97,6 +109,7 @@ final class NetworkBypassManager: ObservableObject {
         let knownUUID = cachedVPNUUID
         // The service name almost never changes; look it up at most every 5 minutes.
         let needsInterface = lastInterfaceLookup.map { Date().timeIntervalSince($0) > 300 } ?? true
+        let retryUUID = lastVPNUUIDMiss.map { Date().timeIntervalSince($0) > 300 } ?? true
 
         Task.detached(priority: .utility) { [weak self] in
             var interface = ""
@@ -108,8 +121,10 @@ final class NetworkBypassManager: ObservableObject {
             }
 
             var vpnUUID = knownUUID
-            if vpnUUID == nil {
+            var searched = false
+            if vpnUUID == nil, retryUUID {
                 vpnUUID = Self.lookupVPNUUID()
+                searched = true
             }
             var vpnIsConnected = false
             if let uuid = vpnUUID {
@@ -132,6 +147,7 @@ final class NetworkBypassManager: ObservableObject {
                     }
                 }
                 if self.cachedVPNUUID != foundUUID { self.cachedVPNUUID = foundUUID }
+                if searched { self.lastVPNUUIDMiss = foundUUID == nil ? Date() : nil }
                 if self.isVPNConnected != connected { self.isVPNConnected = connected }
                 if self.isSpoofDPIRunning != spoofIsRunning { self.isSpoofDPIRunning = spoofIsRunning }
                 self.isRefreshing = false

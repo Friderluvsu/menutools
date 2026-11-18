@@ -2,82 +2,29 @@ import SwiftUI
 
 struct FanControlPickerView: View {
     @ObservedObject var fanControl: FanControlManager
-    var onClose: () -> Void
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.48)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    onClose()
-                }
-
-            MacToolsCard(padding: 14, cornerRadius: 14) {
-                VStack(alignment: .leading, spacing: 12) {
-                    headerView
-
-                    if !fanControl.hasFans {
-                        fanlessNoticeView
-                    } else {
-                        modeSwitcherView
-                        detailContentView
-                    }
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            statusLine
+            if !fanControl.hasFans {
+                fanlessNoticeView
+            } else {
+                modeSwitcherView
+                detailContentView
             }
-            .frame(width: 320)
-            .background(
-                Color(nsColor: .windowBackgroundColor).opacity(0.96),
-                in: RoundedRectangle(cornerRadius: 14)
-            )
-            .shadow(color: .black.opacity(0.35), radius: 25, y: 10)
-            .fixedSize(horizontal: false, vertical: true)
-            .reportsPanelHeight(extra: 24)
         }
     }
 
-    private var headerView: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "fan.fill")
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(.teal)
-                .frame(width: 30, height: 30)
-                .background(Color.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-
-            VStack(alignment: .leading, spacing: 1.5) {
-                Text("Fan Control & Curve")
-                    .font(.system(size: 12.5, weight: .semibold))
-                Text(headerSubtitle)
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button {
-                onClose()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9.5, weight: .medium))
-                    .frame(width: 22, height: 22)
-                    .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
+    private var statusLine: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(fanControl.hasFans ? "\(fanControl.currentRPM) RPM" : "No fans")
+                .font(.system(size: 22, weight: .semibold, design: .monospaced))
+            Spacer(minLength: 8)
+            Text(fanControl.hasFans ? "\(Int(fanControl.currentSensorTemp))°C" : fanControl.modelIdentifier)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-    }
-
-    private var headerSubtitle: String {
-        guard fanControl.hasFans else {
-            return "No Fans detected (\(fanControl.modelIdentifier))"
-        }
-        let tempStr = "\(Int(fanControl.currentSensorTemp))°C"
-        if fanControl.controlMode == .auto {
-            return "Actual: \(fanControl.currentRPM) RPM · \(tempStr) (Auto)"
-        }
-        let isRamping = abs(fanControl.targetRPM - fanControl.currentRPM) > 120
-        if isRamping {
-            return "Actual: \(fanControl.currentRPM) ↗ \(fanControl.targetRPM) RPM · \(tempStr)"
-        }
-        return "Speed: \(fanControl.currentRPM) RPM · \(tempStr)"
     }
 
     private var fanlessNoticeView: some View {
@@ -120,6 +67,7 @@ struct FanControlPickerView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .suppressesFocusRing()
             }
         }
         .padding(2)
@@ -140,12 +88,8 @@ struct FanControlPickerView: View {
 
     private var autoDetailView: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("macOS Automatic Thermal Policy")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.primary)
-            Text("The system dynamically regulates fan speeds via thermalmonitord.")
-                .font(.system(size: 8.5))
-                .foregroundStyle(.secondary)
+            Text("macOS sets the speed")
+                .font(.system(size: 11, weight: .medium))
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -192,6 +136,7 @@ struct FanControlPickerView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .suppressesFocusRing()
             }
 
             // Temperature Thresholds (Start Temp & Max Temp)
@@ -212,6 +157,7 @@ struct FanControlPickerView: View {
                                 .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
+                        .suppressesFocusRing()
 
                         Text("\(fanControl.curveStartTemp)°C")
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -228,6 +174,7 @@ struct FanControlPickerView: View {
                                 .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
+                        .suppressesFocusRing()
                     }
                 }
                 .padding(6)
@@ -250,6 +197,7 @@ struct FanControlPickerView: View {
                                 .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
+                        .suppressesFocusRing()
 
                         Text("\(fanControl.curveMaxTemp)°C")
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -266,6 +214,7 @@ struct FanControlPickerView: View {
                                 .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
+                        .suppressesFocusRing()
                     }
                 }
                 .padding(6)
@@ -341,6 +290,7 @@ struct FanControlPickerView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .suppressesFocusRing()
                 }
             }
 

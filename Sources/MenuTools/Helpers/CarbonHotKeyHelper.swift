@@ -5,11 +5,47 @@ import Carbon
 final class CarbonHotKeyHelper {
     static let shared = CarbonHotKeyHelper()
 
-    private var hotKeyRef: EventHotKeyRef?
-    var handler: (@MainActor () -> Void)?
+    private var hotKeyRefs: [UInt32: EventHotKeyRef] = [:]
+    private var handlers: [UInt32: @MainActor () -> Void] = [:]
+    private var handlerInstalled = false
 
-    func register(keyCode: UInt32, modifiers: UInt32, action: @escaping @MainActor () -> Void) {
-        self.handler = action
+    /// Registers (or replaces) the hotkey with this id.
+    func register(id: UInt32 = 1, keyCode: UInt32, modifiers: UInt32, action: @escaping @MainActor () -> Void) {
+        installHandlerIfNeeded()
+        unregister(id: id)
+        handlers[id] = action
+
+        var ref: EventHotKeyRef?
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4D54_4F4C), id: id)  // "MTOL"
+        let status = RegisterEventHotKey(
+            keyCode,
+            modifiers,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &ref
+        )
+        if status == noErr, let ref {
+            hotKeyRefs[id] = ref
+        } else {
+            handlers[id] = nil
+        }
+    }
+
+    func unregister(id: UInt32) {
+        if let ref = hotKeyRefs.removeValue(forKey: id) {
+            UnregisterEventHotKey(ref)
+        }
+        handlers[id] = nil
+    }
+
+    fileprivate func fire(id: UInt32) {
+        handlers[id]?()
+    }
+
+    private func installHandlerIfNeeded() {
+        guard !handlerInstalled else { return }
+        handlerInstalled = true
 
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -29,9 +65,10 @@ final class CarbonHotKeyHelper {
                     nil,
                     &hotKeyID
                 )
-                if status == noErr && hotKeyID.id == 1 {
+                if status == noErr {
+                    let id = hotKeyID.id
                     Task { @MainActor in
-                        CarbonHotKeyHelper.shared.handler?()
+                        CarbonHotKeyHelper.shared.fire(id: id)
                     }
                 }
                 return noErr
@@ -40,16 +77,6 @@ final class CarbonHotKeyHelper {
             &eventType,
             nil,
             nil
-        )
-
-        let hotKeyID = EventHotKeyID(signature: OSType(0x4D54_4F4C), id: 1)  // "MTOL", 1
-        RegisterEventHotKey(
-            keyCode,
-            modifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
         )
     }
 }

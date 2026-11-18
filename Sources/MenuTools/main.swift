@@ -5,16 +5,67 @@ if let previewFlagIndex = CommandLine.arguments.firstIndex(of: "--render-preview
 {
     let outputURL = URL(fileURLWithPath: CommandLine.arguments[previewFlagIndex + 1])
     let showSettings = CommandLine.arguments.contains("--settings")
+    let showSessions = CommandLine.arguments.contains("--sessions")
     let showAntiSleepPicker = CommandLine.arguments.contains("--anti-sleep-picker")
     let showFanPicker = CommandLine.arguments.contains("--fan-picker")
+    var openSessionDetail: String?
+    if let detailFlag = CommandLine.arguments.firstIndex(of: "--open-session-detail"),
+        CommandLine.arguments.indices.contains(detailFlag + 1)
+    {
+        openSessionDetail = CommandLine.arguments[detailFlag + 1]
+    }
+    var stat: StatTopic?
+    if let statFlag = CommandLine.arguments.firstIndex(of: "--stat"),
+        CommandLine.arguments.indices.contains(statFlag + 1)
+    {
+        stat = StatTopic(rawValue: CommandLine.arguments[statFlag + 1])
+    }
     let rendered = MainActor.assumeIsolated {
-        PreviewRenderer.render(
+        if let themeFlag = CommandLine.arguments.firstIndex(of: "--theme"),
+            CommandLine.arguments.indices.contains(themeFlag + 1),
+            let theme = AppThemeID(rawValue: CommandLine.arguments[themeFlag + 1])
+        {
+            ThemeManager.shared.previewOverride(theme)
+        }
+        if let eggFlag = CommandLine.arguments.firstIndex(of: "--egg-at"),
+            CommandLine.arguments.indices.contains(eggFlag + 1)
+        {
+            ThemeEasterEggLayer.previewElapsed = Double(CommandLine.arguments[eggFlag + 1])
+        }
+        return PreviewRenderer.render(
             to: outputURL,
             showSettings: showSettings,
+            showSessions: showSessions,
             showAntiSleepPicker: showAntiSleepPicker,
-            showFanPicker: showFanPicker
+            showFanPicker: showFanPicker,
+            stat: stat,
+            openSessionDetail: openSessionDetail
         )
     }
+    exit(rendered ? 0 : 1)
+}
+
+if let hudFlag = CommandLine.arguments.firstIndex(of: "--render-clipboard-hud"),
+    CommandLine.arguments.indices.contains(hudFlag + 1)
+{
+    let outputURL = URL(fileURLWithPath: CommandLine.arguments[hudFlag + 1])
+    let rendered = MainActor.assumeIsolated {
+        if let themeFlag = CommandLine.arguments.firstIndex(of: "--theme"),
+            CommandLine.arguments.indices.contains(themeFlag + 1),
+            let theme = AppThemeID(rawValue: CommandLine.arguments[themeFlag + 1])
+        {
+            ThemeManager.shared.previewOverride(theme)
+        }
+        return PreviewRenderer.renderClipboardHUD(to: outputURL)
+    }
+    exit(rendered ? 0 : 1)
+}
+
+if let lightsFlag = CommandLine.arguments.firstIndex(of: "--render-status-lights"),
+    CommandLine.arguments.indices.contains(lightsFlag + 1)
+{
+    let output = URL(fileURLWithPath: CommandLine.arguments[lightsFlag + 1])
+    let rendered = MainActor.assumeIsolated { PreviewRenderer.renderStatusLights(to: output) }
     exit(rendered ? 0 : 1)
 }
 
@@ -26,6 +77,23 @@ if let batteryIconsFlagIndex = CommandLine.arguments.firstIndex(of: "--render-ba
         PreviewRenderer.renderBatteryPreviews(to: outputDir)
     }
     exit(rendered ? 0 : 1)
+}
+
+if CommandLine.arguments.contains("--anti-sleep-diagnose") {
+    // Exercises both sessions for real (assertions, and pmset disablesleep via the helper), then restores.
+    MainActor.assumeIsolated { AntiSleepDiagnose.run() }
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--session-usage-diagnose") {
+    // Token totals per live Claude / Codex session from their logs. Counts only, no text.
+    for line in ClaudeTranscriptUsage.shared.diagnose() { print(line) }
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--stat-diagnose") {
+    for line in StatSampler.diagnose() { print(line) }
+    exit(0)
 }
 
 if CommandLine.arguments.contains("--window-diagnose") {
@@ -45,6 +113,30 @@ if CommandLine.arguments.contains("--ai-limits-diagnose") {
         semaphore.signal()
     }
     semaphore.wait()
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--cursor-cli-diagnose") {
+    // Live Cursor CLI processes, their chat ids, blob counts and CPU share over 6 s. No message text.
+    for line in MainActor.assumeIsolated({ CursorCLIScanner.diagnose() }) { print(line) }
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--terax-reveal-diagnose") {
+    // Which Terax owns a session pid, and that Terax's reply to `pane.reveal`. Switches its tab.
+    for line in TeraxReveal.diagnose(arguments: CommandLine.arguments) { print(line) }
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--terax-link-diagnose") {
+    // The Terax link on a temporary socket: replies and refusals only, no power change.
+    let passed = MainActor.assumeIsolated { TeraxLinkDiagnose.run() }
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.contains("--antigravity-diagnose") {
+    // Live Antigravity conversations, facts, and running statuses across IDE and agy CLI databases.
+    for line in MainActor.assumeIsolated({ AntigravitySessionFiles.diagnose() }) { print(line) }
     exit(0)
 }
 
