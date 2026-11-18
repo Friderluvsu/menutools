@@ -1,0 +1,145 @@
+AGENTS.md
+  s_5153d1fdfd4a37::t_0eeec600eff23e 86-89,97,101,120,132-133,153-162,195,197,200-207,215,226,238-240,245,250,253,256
+Sources/MenuTools/App/AppDelegate.swift
+  s_5153d1fdfd4a37::t_f15c5f30f1e535 25,34,57,61,77,130-134,167-168,171-173,195,211-217,221-230,247,294-300,312-361,391,432,472-474,480,483-488,496-501,503,507-510,512-515,517-525,528-530,533-535,537-539,541-556,577,581,585-586,600-606,609,611,617,703,706-707,716-720,747,759,861,947
+Sources/MenuTools/App/AppState.swift
+  s_5153d1fdfd4a37::t_27361729768329 157-162,167,228,232-264,295-299,307-311,343,348-363
+Sources/MenuTools/App/PanelMemoryDiagnose.swift
+  s_d968f5aff9f546::t_e614d9643fca79 18
+Sources/MenuTools/App/PanelOpenDiagnose.swift
+  s_5153d1fdfd4a37::t_f8e63a8298f04f 1-115
+Sources/MenuTools/Features/AILimits/AILimitsManager.swift
+  s_5153d1fdfd4a37::t_a1253c3872db9c 10-13,103,105,108-109,117-124,127,131-134,136-140,144
+Sources/MenuTools/Features/AgentUsage/ClaudeTranscriptUsage.swift
+  s_d968f5aff9f546::t_5cbb651b603a08 28-32,34-36,47,54-56,102,105-119,121,133-142,144
+Sources/MenuTools/Features/AntiSleep/AfterDoneManager.swift
+  s_5153d1fdfd4a37::t_78d3c4b0bd92c6 1-288
+Sources/MenuTools/Features/AntiSleep/AntiSleepManager.swift
+  s_d968f5aff9f546::t_29f1cb0521e18a 99-101,252-253,256,477
+Sources/MenuTools/Features/AntigravitySessions/AntigravitySessionsManager.swift
+  s_5153d1fdfd4a37::t_de62f4b70f46f6 4,17-21,36,44,48-53,64,68-70,82,91,99-130,142-145,148-149,154,156,159-160,162-164,171-185,188-196,203-206,213-219,222,229-231,242,249-250,254-256
+Sources/MenuTools/Features/Battery/BatteryManager.swift
+  s_d968f5aff9f546::t_ccbca55499519d 228-229,231
+Sources/MenuTools/Features/ClaudeSessions/ClaudeSession.swift
+  s_5153d1fdfd4a37::t_5dbdc533447715 114-128
+Sources/MenuTools/Features/ClaudeSessions/ClaudeSessionsManager.swift
+  s_5153d1fdfd4a37::t_813809622d278c 10-12,18,40-41,70-75,86-109,112,115,117-128,150,159,165-169,282,286,302,319-320,364,368-369
+Sources/MenuTools/Features/CodexSessions/CodexSessionsManager.swift
+  s_5153d1fdfd4a37::t_c3b15cd4e612ed 15-17,32,40,44-49,60,70,81,89-118,151,158-164,167,174-176,180-182
+Sources/MenuTools/Features/CursorSessions/AppWindowFocus.swift
+  s_e2dd75ca12ea7b::t_236a04e1cd80b3 21-25
+Sources/MenuTools/Features/CursorSessions/CursorCLISessions.swift
+  s_d968f5aff9f546::t_350162212140fc 1-346
+Sources/MenuTools/Features/CursorSessions/CursorSession.swift
+  s_5153d1fdfd4a37::t_b39269c89bd755 4,22-23,310-319
+Sources/MenuTools/Features/CursorSessions/CursorSessionsManager.swift
+  s_5153d1fdfd4a37::t_2eb1ce5f5182c4 5-6,19-25,36,40,49,53-58,70,75-82,87,91-92,97,105-136,144-147,149,153-154,157-158,163,165,177-191,195,206-210,215-230,233,240-242,253,260-261,265-267
+Sources/MenuTools/Features/FanControl/FanControlManager.swift
+  s_5153d1fdfd4a37::t_82ae010956c834 103-104,229-248,253
+Sources/MenuTools/Features/FanControl/SMCHelperManager.swift
+  s_d968f5aff9f546::t_c8b4d647301b9d 130-131,136,140,144,148-153
+Sources/MenuTools/Features/MediaConverter/MediaConverterManager.swift
+  s_d968f5aff9f546::t_c501899a0b9540 347
+Sources/MenuTools/Features/NetworkBypass/NetworkBypassManager.swift
+  s_d968f5aff9f546::t_67b547ef6cf185 96-104
+Sources/MenuTools/Features/SessionNotifier.swift
+  s_5153d1fdfd4a37::t_a5ddaaea394909 1-76
+Sources/MenuTools/Features/StatusLights/StatusLights.swift
+  s_d968f5aff9f546::t_0e61b09d4d9993 161-163,191,1277-1283,1311,1313
+Sources/MenuTools/Features/SystemMonitor/SystemMonitorManager.swift
+  s_d968f5aff9f546::t_4f77c5c7c7e17a 235-239
+Sources/MenuTools/Features/TeraxLink/RestModeManager.swift
+  s_d968f5aff9f546::t_d95bbfb2af6cef 1-155
+Sources/MenuTools/Features/TeraxLink/TeraxLinkProtocol.swift
+  s_5153d1fdfd4a37::t_95578e7cb96e30 1-263
+Sources/MenuTools/Features/TeraxLink/TeraxLinkServer.swift
+  s_d968f5aff9f546::t_2030c571b71759 1-220
+Sources/MenuTools/Features/TeraxLink/TeraxLinkService.swift
+  s_5153d1fdfd4a37::t_9c85f81f26560e 1-206
+Sources/MenuTools/Features/TeraxLink/TeraxReveal.swift
+  s_e2dd75ca12ea7b::t_d66d4964515af0 1-192
+Sources/MenuTools/Helpers/Shell.swift
+  s_d968f5aff9f546::t_1c4d0d22effab5 25,27,99-109
+Sources/MenuTools/Views/Components/AILimitsCard.swift
+  s_5153d1fdfd4a37::t_46e310d405a342 1,16,27-29,47,52,68-107
+Sources/MenuTools/Views/Components/AgentSessionRows.swift
+  s_5153d1fdfd4a37::t_a20fff9fd17be6 30-39,42-43,57,61-69,88-89,102-109,116-120,123-125,134,137-138,141-145,147,152-153,155,163-182,187-303,340-342,345-346,356,358,361-364,400-401,407,415-416,421,424-425,447,464-477
+Sources/MenuTools/Views/Components/AntigravitySessionsCard.swift
+  s_5153d1fdfd4a37::t_52ced12d234269 5,9-34,36,40-41,43,51-54,61-100
+Sources/MenuTools/Views/Components/ClaudeSessionsCard.swift
+  s_5153d1fdfd4a37::t_c358837fa5273a 6,11,15-17,26-28,40-42,52-67
+Sources/MenuTools/Views/Components/CodexSessionsCard.swift
+  s_5153d1fdfd4a37::t_6109026d3a6971 5,9-35,37,41-42,44,52-55,62-103
+Sources/MenuTools/Views/Components/CursorSessionsCard.swift
+  s_5153d1fdfd4a37::t_65f852ce7e4224 6,10-35,37,41-42,44,52-55,62-104
+Sources/MenuTools/Views/Components/SessionCardHeader.swift
+  s_5153d1fdfd4a37::t_64f593f13a0cfe 12-14,22,24-43,47
+Sources/MenuTools/Views/Components/SessionsDashboardSection.swift
+  s_5153d1fdfd4a37::t_d5c4d845a3659e 111-113,116-117,119
+Sources/MenuTools/Views/PopoverContentView.swift
+  s_5153d1fdfd4a37::t_c428f8692d7b18 33,84,128-133,139-148,196,216,308,326-329,339,341,343,345,348-350,358-361,368,375-378,382-383,401,409-415,602,605-617,961-1041
+Sources/MenuTools/Views/Tabs/SettingsTabView.swift
+  s_5153d1fdfd4a37::t_bd6b7bbb734262 575-578,712-721,831-833,837-841,844,851-889,1003,1009-1014
+Sources/MenuTools/main.swift
+  s_e2dd75ca12ea7b::t_cf6c74f31d39a0 119-142
+docs/AGENT_GUIDE.md
+  s_5153d1fdfd4a37::t_04478d7b723739 117-118,165,216-218
+docs/knowledge-base/README.md
+  s_d968f5aff9f546::t_2e773ec5546e9d 20
+docs/knowledge-base/ai-limits.md
+  s_5153d1fdfd4a37::t_e988c48667a910 106,111
+docs/knowledge-base/claude-sessions.md
+  s_5153d1fdfd4a37::t_89b39d7a460905 47-49,57
+docs/knowledge-base/codex-sessions.md
+  s_5153d1fdfd4a37::t_01e677f17d617c 29,31,50,54
+docs/knowledge-base/performance.md
+  s_5153d1fdfd4a37::t_98c3553613e15d 19,23,25,43,69,114-133
+docs/knowledge-base/terax-link.md
+  s_5153d1fdfd4a37::t_e7e1edf7c903f1 1-101
+docs/knowledge-base/troubleshooting.md
+  s_d968f5aff9f546::t_a943e125f0f784 104
+Sources/MenuTools/Features/SystemMonitor/ProcessLookup.swift
+  s_5153d1fdfd4a37::t_e608368f669f60 57-83,173-186
+Sources/MenuTools/Features/TeraxLink/TeraxLinkDiagnose.swift
+  s_5153d1fdfd4a37::t_696c0fdbedf81d 1-130
+docs/knowledge-base/antigravity-sessions.md
+  s_5153d1fdfd4a37::t_52d563f6d77083 9,40,42,46,60,64-66
+docs/knowledge-base/cursor-sessions.md
+  s_5153d1fdfd4a37::t_78427e814f5176 3,19-31,52,54,58,62,78-80
+Sources/MenuTools/Features/AntigravitySessions/AntigravitySession.swift
+  s_5153d1fdfd4a37::t_bddadd91418549 14-15,94-97,99-103,106,110,114,116-127,129-130,135,139-260,263,281-282,287,290-293,350-357
+Sources/MenuTools/Helpers/Alerts.swift
+  s_5153d1fdfd4a37::t_68d9aeb50a24ee 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.18",
+  "base_commit_sha": "61f2de92c6890862b3ea6b27b2bb0bd44edbe048",
+  "prompts": {},
+  "sessions": {
+    "s_5153d1fdfd4a37": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91793697-dabe-4ed4-8afe-93c9c3f95014",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    },
+    "s_d968f5aff9f546": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4740b5aa-3e69-4e56-bf1f-5aa7d47fb0cc",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    },
+    "s_e2dd75ca12ea7b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aec256f6-353f-44f4-837b-f467aa6df8be",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "zakir-gadilov <zakir.gadilov.ext@socialnative.com>"
+    }
+  }
+}
